@@ -70,16 +70,29 @@ pip install -r infrastructure/requirements.txt
 
 # Bootstrap CDK (first time only)
 cd infrastructure
-cdk bootstrap
+cdk bootstrap aws://<ACCOUNT_ID>/us-east-1
 
 # Deploy all stacks
-cdk deploy --all
+cdk deploy --all --require-approval broadening
+
+# Retrieve API URL and key from stack outputs
+aws cloudformation describe-stacks --stack-name KKQueryStackDev \
+  --query "Stacks[0].Outputs" --output table
+
+# Set up frontend
+cd ../frontend
+npm install
+cp .env.example .env
+# Edit .env with your API URL, API key, and user ID
+npm run dev
 
 # Run tests
 cd ..
 pip install pytest moto pydantic boto3
-pytest lambdas/shared/tests/ -v
+pytest lambdas/ -v
 ```
+
+For the full walkthrough including Bedrock model access, Google Workspace setup, API key retrieval, and troubleshooting, see [docs/deployment.md](docs/deployment.md).
 
 ## Security
 

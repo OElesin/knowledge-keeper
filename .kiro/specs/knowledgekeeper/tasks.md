@@ -168,7 +168,7 @@ Tasks are ordered by dependency. Complete each phase before moving to the next.
 
 ### Phase 4: Frontend
 
-- [ ] 4.1 Bootstrap React app
+- [x] 4.1 Bootstrap React app
   > Supports: All frontend requirements — project scaffolding
   - Run `npm create vite@latest frontend -- --template react-ts` in project root
   - Install dependencies: `tailwindcss`, `@tanstack/react-query`, `react-router-dom`, `axios`
@@ -177,7 +177,7 @@ Tasks are ordered by dependency. Complete each phase before moving to the next.
   - Create `.env.example` with `VITE_API_URL`
   - Set up React Router with routes: `/` (dashboard), `/twins/:employeeId` (detail), `/twins/:employeeId/query` (query)
 
-- [ ] 4.2 Implement AdminDashboard page
+- [x] 4.2 Implement AdminDashboard page
   > Supports: Req 1 AC1 (offboarding form), Req 1 AC5 (status tracking)
   - Create `frontend/src/pages/AdminDashboard.tsx`
   - Twin list table: columns for employee name, status (with `TwinStatusBadge` component), offboard date, chunk count
@@ -186,7 +186,7 @@ Tasks are ordered by dependency. Complete each phase before moving to the next.
   - Form submission calls `POST /twins`, shows success/error feedback
   - Poll for twin status updates using `useIngestionStatus` hook (refetch interval)
 
-- [ ] 4.3 Implement TwinDetail page
+- [x] 4.3 Implement TwinDetail page
   > Supports: Req 1 AC5 (status detail), Req 7 AC1-AC2 (access management), Req 8 AC2 (deletion)
   - Create `frontend/src/pages/TwinDetail.tsx`
   - Display twin metadata: name, email, role, department, offboard date, status, chunk count
@@ -194,7 +194,7 @@ Tasks are ordered by dependency. Complete each phase before moving to the next.
   - Grant calls `POST /twins/{employeeId}/access`, revoke calls `DELETE /twins/{employeeId}/access/{userId}`
   - Delete twin button with confirmation dialog; calls `DELETE /twins/{employeeId}`
 
-- [ ] 4.4 Implement QueryInterface page
+- [x] 4.4 Implement QueryInterface page
   > Supports: Req 6 AC1-AC3 (query submission, cited answers, confidence, staleness)
   - Create `frontend/src/pages/QueryInterface.tsx`
   - Chat-style input for natural language queries against selected twin
@@ -208,10 +208,10 @@ Tasks are ordered by dependency. Complete each phase before moving to the next.
 
 ### Phase 5: Documentation
 
-- [ ] 5.1 Write deployment guide
+- [x] 5.1 Write deployment guide
   > Supports: Operational readiness
   - Create `docs/deployment.md`: prerequisites (AWS CLI, CDK CLI, Python 3.12, Node.js), CDK bootstrap command, `cdk deploy --all` instructions, post-deploy verification steps (API key retrieval, test API call)
 
-- [ ] 5.2 Write API reference
+- [x] 5.2 Write API reference
   > Supports: Developer onboarding
   - Create `docs/api-reference.md`: all 7 endpoints with request/response schemas, error codes, auth flow (API key in `x-api-key` header, user ID in `x-user-id` header), example curl commands
