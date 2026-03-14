@@ -1,0 +1,25 @@
+{
+  "app": "python3 app.py",
+  "watch": {
+    "include": ["**"],
+    "exclude": [
+      "README.md",
+      "cdk*.json",
+      "requirements*.txt",
+      "**/__pycache__",
+      "**/*.pyc",
+      "tests"
+    ]
+  },
+  "context": {
+    "environments": {
+      "dev": {
+        "env_name": "dev",
+        "s3_lifecycle_days": 90,
+        "retention_years": 3,
+        "audit_ttl_years": 7
+      }
+    },
+    "default_environment": "dev"
+  }
+}
