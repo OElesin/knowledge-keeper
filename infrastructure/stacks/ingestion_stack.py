@@ -326,6 +326,193 @@ class KKIngestionStack(Stack):
             )
         )
 
+        # --- Lambda: embedder ---
+        embedder_code_path = str(
+            Path(__file__).resolve().parent.parent.parent
+            / "lambdas"
+            / "ingestion"
+            / "embedder"
+        )
+
+        # Dedicated IAM role (least-privilege)
+        embedder_role = iam.Role(
+            self,
+            "EmbedderRole",
+            role_name=f"kk-{env_name}-ingestion-embedder",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"
+                ),
+            ],
+        )
+
+        # Bedrock:InvokeModel scoped to Nova Embeddings model
+        embedder_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["bedrock:InvokeModel"],
+                resources=[
+                    f"arn:aws:bedrock:{self.region}::foundation-model/amazon.nova-2-multimodal-embeddings-v1:0"
+                ],
+            )
+        )
+
+        # S3Vectors:PutVectors on the vector bucket
+        embedder_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3vectors:PutVectors"],
+                resources=[
+                    f"arn:aws:s3vectors:{self.region}:{self.account}:vector-bucket/kk-{env_name}/*"
+                ],
+            )
+        )
+
+        # KMS encrypt/decrypt for S3 Vectors
+        embedder_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["kms:Decrypt", "kms:GenerateDataKey"],
+                resources=[storage_stack.vectors_kms_key.key_arn],
+            )
+        )
+
+        # DynamoDB:UpdateItem on Twins table
+        embedder_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["dynamodb:UpdateItem"],
+                resources=[storage_stack.twins_table.table_arn],
+            )
+        )
+
+        # KMS decrypt for DynamoDB
+        embedder_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["kms:Decrypt", "kms:GenerateDataKey"],
+                resources=[storage_stack.dynamo_kms_key.key_arn],
+            )
+        )
+
+        # SQS:ReceiveMessage + DeleteMessage + GetQueueAttributes on EmbedQueue
+        embedder_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "sqs:ReceiveMessage",
+                    "sqs:DeleteMessage",
+                    "sqs:GetQueueAttributes",
+                ],
+                resources=[self.embed_queue.queue_arn],
+            )
+        )
+
+        self.embedder_fn = _lambda.Function(
+            self,
+            "EmbedderFn",
+            function_name=f"kk-{env_name}-ingestion-embedder",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.handler",
+            code=_lambda.Code.from_asset(embedder_code_path),
+            role=embedder_role,
+            timeout=Duration.minutes(10),
+            memory_size=1024,
+            layers=[storage_stack.shared_layer],
+            environment={
+                "VECTOR_BUCKET_NAME": f"kk-{env_name}",
+                "VECTOR_INDEX_NAME": f"kk-{env_name}-chunks",
+                "TWINS_TABLE_NAME": storage_stack.twins_table.table_name,
+            },
+        )
+
+        # SQS event source mapping: EmbedQueue → embedder (batch size 3)
+        self.embedder_fn.add_event_source(
+            lambda_events.SqsEventSource(
+                self.embed_queue,
+                batch_size=3,
+                report_batch_item_failures=True,
+            )
+        )
+
+        # --- Lambda: email_fetcher ---
+        email_fetcher_code_path = str(
+            Path(__file__).resolve().parent.parent.parent
+            / "lambdas"
+            / "ingestion"
+            / "email_fetcher"
+        )
+
+        # Dedicated IAM role (least-privilege)
+        email_fetcher_role = iam.Role(
+            self,
+            "EmailFetcherRole",
+            role_name=f"kk-{env_name}-ingestion-email-fetcher",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"
+                ),
+            ],
+        )
+
+        # S3:PutObject on raw-archives bucket
+        email_fetcher_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:PutObject"],
+                resources=[
+                    storage_stack.raw_archives_bucket.bucket_arn + "/*"
+                ],
+            )
+        )
+
+        # KMS encrypt for S3 bucket key
+        email_fetcher_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["kms:Encrypt", "kms:GenerateDataKey"],
+                resources=[storage_stack.s3_kms_key.key_arn],
+            )
+        )
+
+        # SecretsManager:GetSecretValue for Google Workspace credentials
+        email_fetcher_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[
+                    f"arn:aws:secretsmanager:{self.region}:{self.account}:secret:kk/{env_name}/google-workspace-creds*"
+                ],
+            )
+        )
+
+        # DynamoDB:UpdateItem on Twins table (status updates)
+        email_fetcher_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["dynamodb:UpdateItem"],
+                resources=[storage_stack.twins_table.table_arn],
+            )
+        )
+
+        # KMS decrypt for DynamoDB
+        email_fetcher_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["kms:Decrypt", "kms:GenerateDataKey"],
+                resources=[storage_stack.dynamo_kms_key.key_arn],
+            )
+        )
+
+        self.email_fetcher_fn = _lambda.Function(
+            self,
+            "EmailFetcherFn",
+            function_name=f"kk-{env_name}-ingestion-email-fetcher",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.handler",
+            code=_lambda.Code.from_asset(email_fetcher_code_path),
+            role=email_fetcher_role,
+            timeout=Duration.minutes(15),
+            memory_size=1024,
+            layers=[storage_stack.shared_layer],
+            environment={
+                "RAW_ARCHIVES_BUCKET": storage_stack.raw_archives_bucket.bucket_name,
+                "GOOGLE_CREDS_SECRET": f"kk/{env_name}/google-workspace-creds",
+                "TWINS_TABLE_NAME": storage_stack.twins_table.table_name,
+            },
+        )
+
         # --- Stack outputs (SQS) ---
         CfnOutput(self, "ParseQueueUrl", value=self.parse_queue.queue_url)
         CfnOutput(self, "ParseQueueArn", value=self.parse_queue.queue_arn)
@@ -357,4 +544,14 @@ class KKIngestionStack(Stack):
             self,
             "CleanerFnArn",
             value=self.cleaner_fn.function_arn,
+        )
+        CfnOutput(
+            self,
+            "EmbedderFnArn",
+            value=self.embedder_fn.function_arn,
+        )
+        CfnOutput(
+            self,
+            "EmailFetcherFnArn",
+            value=self.email_fetcher_fn.function_arn,
         )

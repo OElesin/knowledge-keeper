@@ -90,7 +90,7 @@ Tasks are ordered by dependency. Complete each phase before moving to the next.
   - Publish cleaned threads to EmbedQueue
   - CDK: SQS event source mapping, own IAM role with Comprehend:DetectPiiEntities + SQS:SendMessage + SQS:ReceiveMessage/DeleteMessage
 
-- [ ] 2.5 Implement Lambda: embedder
+- [x] 2.5 Implement Lambda: embedder
   > Supports: Req 5 AC1-AC5 (chunking, embedding, S3 Vectors indexing, Twin status update)
   - Create `lambdas/ingestion/embedder/handler.py` and `lambdas/ingestion/embedder/logic.py`
   - Handler: process SQS batch (batch size: 3)
@@ -101,7 +101,7 @@ Tasks are ordered by dependency. Complete each phase before moving to the next.
   - Retry failed Bedrock/S3Vectors calls 3x with exponential backoff; on final failure, let message go to DLQ
   - CDK: SQS event source mapping, own IAM role with Bedrock:InvokeModel (scoped to Nova Embeddings model ARN) + S3Vectors:PutVectors + DynamoDB:UpdateItem + SQS permissions
 
-- [ ] 2.6 Implement Lambda: email_fetcher (Google Workspace)
+- [x] 2.6 Implement Lambda: email_fetcher (Google Workspace)
   > Supports: Req 2 AC1-AC5 (Google Workspace email fetching, batch upload, manifest)
   - Create `lambdas/ingestion/email_fetcher/handler.py` and `lambdas/ingestion/email_fetcher/logic.py`
   - Handler: parse event with `employeeId` and `email`
