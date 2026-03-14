@@ -4,7 +4,7 @@ import os
 
 import aws_cdk as cdk
 
-from stacks import KKStorageStack, KKIngestionStack, KKQueryStack
+from stacks import KKStorageStack, KKIngestionStack, KKQueryStack, KKFrontendStack
 
 
 app = cdk.App()
@@ -46,5 +46,13 @@ query_stack = KKQueryStack(
 )
 query_stack.add_dependency(storage_stack)
 query_stack.add_dependency(ingestion_stack)
+
+frontend_stack = KKFrontendStack(
+    app,
+    f"KKFrontendStack{suffix}",
+    api_url=query_stack.api.url,
+    env=aws_env,
+)
+frontend_stack.add_dependency(query_stack)
 
 app.synth()
