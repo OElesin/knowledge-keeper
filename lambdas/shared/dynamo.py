@@ -159,3 +159,27 @@ def write_audit_log(
         item["ttl"] = ttl
     table.put_item(Item=item)
     return item
+
+
+def delete_access_for_employee(
+    employee_id: str, resource=None
+) -> None:
+    """Delete all access records for an employee (scan + batch delete)."""
+    ddb = resource or _get_resource()
+    table = ddb.Table(ACCESS_TABLE_NAME)
+
+    # Scan for all records with this employeeId (sort key)
+    items = []
+    scan_kwargs: dict[str, Any] = {
+        "FilterExpression": Key("employeeId").eq(employee_id),
+    }
+    while True:
+        resp = table.scan(**scan_kwargs)
+        items.extend(resp.get("Items", []))
+        if "LastEvaluatedKey" not in resp:
+            break
+        scan_kwargs["ExclusiveStartKey"] = resp["LastEvaluatedKey"]
+
+    with table.batch_writer() as batch:
+        for item in items:
+            batch.delete_item(Key={"userId": item["userId"], "employeeId": item["employeeId"]})

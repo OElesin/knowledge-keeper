@@ -116,7 +116,7 @@ Tasks are ordered by dependency. Complete each phase before moving to the next.
 
 ### Phase 3: Query Layer & API
 
-- [ ] 3.1 Implement KKQueryStack — API Gateway with API Key auth
+- [x] 3.1 Implement KKQueryStack — API Gateway with API Key auth
   > Supports: Req 7 AC3 (API key validation), architecture API standards
   - Create `infrastructure/stacks/query_stack.py`
   - Create REST API (`apigateway.RestApi`) with Lambda proxy integration
@@ -125,7 +125,7 @@ Tasks are ordered by dependency. Complete each phase before moving to the next.
   - Configure CORS: allow frontend origin, `x-api-key` and `x-user-id` in allowed headers
   - Export API URL and API key ID as stack outputs
 
-- [ ] 3.2 Implement KKQueryStack — API routes
+- [x] 3.2 Implement KKQueryStack — API routes
   > Supports: Req 1 AC1-AC5, Req 6 AC1, Req 7 AC1-AC2, Req 8 AC2 (all API endpoints)
   - Define REST API resources and methods:
     - `POST /twins` → admin Lambda
@@ -138,7 +138,7 @@ Tasks are ordered by dependency. Complete each phase before moving to the next.
   - All methods require API key (`apiKeyRequired: true`)
   - Wire Lambda proxy integrations for each route
 
-- [ ] 3.3 Implement Lambda: query_handler
+- [x] 3.3 Implement Lambda: query_handler
   > Supports: Req 6 AC1-AC5 (query embedding, vector search, RAG generation, response envelope), Req 7 AC3 (access check)
   - Create `lambdas/query/query_handler/handler.py` and `lambdas/query/query_handler/logic.py`
   - Handler: extract `x-user-id` header, `employeeId` path param, `query` from body
@@ -153,7 +153,7 @@ Tasks are ordered by dependency. Complete each phase before moving to the next.
   - Return response envelope: `{answer, sources, confidence, staleness_warning}`
   - CDK: own IAM role with Bedrock:InvokeModel (Nova Embeddings + Nova Pro ARNs), S3Vectors:QueryVectors, DynamoDB:GetItem (Access + Twins), DynamoDB:PutItem (Audit)
 
-- [ ] 3.4 Implement Lambda: admin
+- [x] 3.4 Implement Lambda: admin
   > Supports: Req 1 AC1-AC5 (twin CRUD), Req 7 AC1-AC2 (access management), Req 8 AC1-AC3 (deletion + retention)
   - Create `lambdas/query/admin/handler.py` and `lambdas/query/admin/logic.py`
   - `POST /twins`: validate required fields, check for existing twin (409 if exists), create Twin record with status `ingesting` and `retention_expiry` (offboard_date + configurable retention), optionally invoke email_fetcher async

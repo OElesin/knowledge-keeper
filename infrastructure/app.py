@@ -40,8 +40,11 @@ ingestion_stack.add_dependency(storage_stack)
 query_stack = KKQueryStack(
     app,
     f"KKQueryStack{suffix}",
+    storage_stack=storage_stack,
+    ingestion_stack=ingestion_stack,
     env=aws_env,
 )
 query_stack.add_dependency(storage_stack)
+query_stack.add_dependency(ingestion_stack)
 
 app.synth()

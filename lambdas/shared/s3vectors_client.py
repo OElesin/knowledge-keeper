@@ -112,3 +112,43 @@ def delete_vectors(
         indexName=index_name or VECTOR_INDEX_NAME,
         keys=keys,
     )
+
+
+def delete_vectors_for_employee(
+    employee_id: str,
+    bucket_name: str | None = None,
+    index_name: str | None = None,
+    client=None,
+) -> None:
+    """Delete all vectors for an employee by querying then deleting.
+
+    Uses a zero-vector query with employee_id filter to find all chunk keys,
+    then deletes them in batches.
+    """
+    if client is None:
+        client = _get_client()
+
+    bkt = bucket_name or VECTOR_BUCKET_NAME
+    idx = index_name or VECTOR_INDEX_NAME
+
+    # Query with a dummy vector to get all keys for this employee
+    # Use max topK to get as many as possible per call
+    dummy_embedding = [0.0] * 1024
+    response = client.query_vectors(
+        vectorBucketName=bkt,
+        indexName=idx,
+        queryVector={"float32": dummy_embedding},
+        topK=100,
+        filter={"employee_id": employee_id},
+        returnDistance=False,
+        returnMetadata=False,
+    )
+
+    keys = [v["key"] for v in response.get("vectors", [])]
+    if keys:
+        client.delete_vectors(
+            vectorBucketName=bkt,
+            indexName=idx,
+            keys=keys,
+        )
+        logger.info("Deleted %d vectors for employee %s", len(keys), employee_id)
