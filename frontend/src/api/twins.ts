@@ -20,7 +20,7 @@ export interface CreateTwinPayload {
   role: string;
   department: string;
   offboardDate: string;
-  provider: "google" | "upload";
+  provider: "google" | "upload" | "microsoft";
 }
 
 interface ApiResponse<T> {

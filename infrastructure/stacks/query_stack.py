@@ -252,12 +252,15 @@ class KKQueryStack(Stack):
             )
         )
 
-        # Lambda:InvokeFunction on email_fetcher (async invocation from admin)
+        # Lambda:InvokeFunction on email_fetcher and m365_email_fetcher (async invocation from admin)
         if ingestion_stack is not None:
             admin_role.add_to_policy(
                 iam.PolicyStatement(
                     actions=["lambda:InvokeFunction"],
-                    resources=[ingestion_stack.email_fetcher_fn.function_arn],
+                    resources=[
+                        ingestion_stack.email_fetcher_fn.function_arn,
+                        ingestion_stack.m365_email_fetcher_fn.function_arn,
+                    ],
                 )
             )
 
@@ -281,6 +284,11 @@ class KKQueryStack(Stack):
                 "RAW_ARCHIVES_BUCKET": storage_stack.raw_archives_bucket.bucket_name,
                 "EMAIL_FETCHER_FN_NAME": (
                     ingestion_stack.email_fetcher_fn.function_name
+                    if ingestion_stack
+                    else ""
+                ),
+                "M365_EMAIL_FETCHER_FN_NAME": (
+                    ingestion_stack.m365_email_fetcher_fn.function_name
                     if ingestion_stack
                     else ""
                 ),

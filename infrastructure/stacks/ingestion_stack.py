@@ -513,6 +513,89 @@ class KKIngestionStack(Stack):
             },
         )
 
+        # --- Lambda: m365_email_fetcher ---
+        m365_email_fetcher_code_path = str(
+            Path(__file__).resolve().parent.parent.parent
+            / "lambdas"
+            / "ingestion"
+            / "m365_email_fetcher"
+        )
+
+        # Dedicated IAM role (least-privilege)
+        m365_email_fetcher_role = iam.Role(
+            self,
+            "M365EmailFetcherRole",
+            role_name=f"kk-{env_name}-ingestion-m365-email-fetcher",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"
+                ),
+            ],
+        )
+
+        # S3:PutObject on raw-archives bucket
+        m365_email_fetcher_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["s3:PutObject"],
+                resources=[
+                    storage_stack.raw_archives_bucket.bucket_arn + "/*"
+                ],
+            )
+        )
+
+        # KMS encrypt for S3 bucket key
+        m365_email_fetcher_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["kms:Encrypt", "kms:GenerateDataKey"],
+                resources=[storage_stack.s3_kms_key.key_arn],
+            )
+        )
+
+        # SecretsManager:GetSecretValue for M365 credentials
+        m365_email_fetcher_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[
+                    f"arn:aws:secretsmanager:{self.region}:{self.account}:secret:kk/{env_name}/m365-credentials*"
+                ],
+            )
+        )
+
+        # DynamoDB:UpdateItem on Twins table (status updates)
+        m365_email_fetcher_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["dynamodb:UpdateItem"],
+                resources=[storage_stack.twins_table.table_arn],
+            )
+        )
+
+        # KMS decrypt for DynamoDB
+        m365_email_fetcher_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["kms:Decrypt", "kms:GenerateDataKey"],
+                resources=[storage_stack.dynamo_kms_key.key_arn],
+            )
+        )
+
+        self.m365_email_fetcher_fn = _lambda.Function(
+            self,
+            "M365EmailFetcherFn",
+            function_name=f"kk-{env_name}-ingestion-m365-email-fetcher",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.handler",
+            code=_lambda.Code.from_asset(m365_email_fetcher_code_path),
+            role=m365_email_fetcher_role,
+            timeout=Duration.minutes(15),
+            memory_size=1024,
+            layers=[storage_stack.shared_layer],
+            environment={
+                "RAW_ARCHIVES_BUCKET": storage_stack.raw_archives_bucket.bucket_name,
+                "M365_CREDS_SECRET": f"kk/{env_name}/m365-credentials",
+                "TWINS_TABLE_NAME": storage_stack.twins_table.table_name,
+            },
+        )
+
         # --- Stack outputs (SQS) ---
         CfnOutput(self, "ParseQueueUrl", value=self.parse_queue.queue_url)
         CfnOutput(self, "ParseQueueArn", value=self.parse_queue.queue_arn)
@@ -554,4 +637,9 @@ class KKIngestionStack(Stack):
             self,
             "EmailFetcherFnArn",
             value=self.email_fetcher_fn.function_arn,
+        )
+        CfnOutput(
+            self,
+            "M365EmailFetcherFnArn",
+            value=self.m365_email_fetcher_fn.function_arn,
         )

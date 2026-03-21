@@ -16,6 +16,8 @@ DEFAULT_RETENTION_YEARS = 3
 
 REQUIRED_TWIN_FIELDS = ("employeeId", "name", "email", "role", "department", "offboardDate")
 
+VALID_PROVIDERS = {"google", "upload", "microsoft"}
+
 
 # ---------------------------------------------------------------------------
 # POST /twins — create twin
@@ -81,6 +83,17 @@ def create_twin(
 
     provider = body.get("provider", "upload")
 
+    if provider not in VALID_PROVIDERS:
+        return {
+            "success": False,
+            "status_code": 400,
+            "error": {
+                "code": "VALIDATION_ERROR",
+                "message": f"Invalid provider '{provider}'. Valid providers: {', '.join(sorted(VALID_PROVIDERS))}",
+                "details": {"validProviders": sorted(VALID_PROVIDERS)},
+            },
+        }
+
     item = {
         "employeeId": employee_id,
         "name": body["name"],
@@ -122,6 +135,18 @@ def create_twin(
                 )
             except Exception:
                 logger.exception("Failed to invoke email_fetcher for %s", employee_id)
+
+    # Invoke M365 email fetcher async for Microsoft provider
+    elif provider == "microsoft" and lambda_module is not None:
+        m365_fetcher_fn = os.environ.get("M365_EMAIL_FETCHER_FN_NAME", "")
+        if m365_fetcher_fn:
+            try:
+                lambda_module.invoke_async(
+                    function_name=m365_fetcher_fn,
+                    payload={"employeeId": employee_id, "email": body["email"]},
+                )
+            except Exception:
+                logger.exception("Failed to invoke m365_email_fetcher for %s", employee_id)
 
     # Audit log
     dynamo_module.write_audit_log(

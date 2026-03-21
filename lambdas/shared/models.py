@@ -23,7 +23,7 @@ class Twin(BaseModel):
         "ingesting", "processing", "embedding", "active", "error", "expired", "deleted"
     ] = "ingesting"
     retention_expiry: date | None = Field(default=None, alias="retentionExpiry")
-    provider: Literal["google", "upload"] = "upload"
+    provider: Literal["google", "upload", "microsoft"] = "upload"
 
     model_config = {"populate_by_name": True}
 
