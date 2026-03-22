@@ -12,6 +12,8 @@ An open-source, self-hosted platform that transforms departing employees' email 
 
 ## Architecture
 
+![KnowledgeKeeper AWS Architecture](generated-diagrams/knowledgekeeper-architecture.png)
+
 Fully serverless on AWS. Two independent layers sharing a storage tier:
 
 - **Ingestion Pipeline** — S3 events → SQS → Lambda chain (parser → cleaner → embedder)
