@@ -31,9 +31,9 @@ interface ApiResponse<T> {
 }
 
 export async function fetchTwins(): Promise<Twin[]> {
-  const { data } = await apiClient.get<ApiResponse<Twin[]>>("/twins");
+  const { data } = await apiClient.get<ApiResponse<{ twins: Twin[] }>>("/twins");
   if (!data.success) throw new Error(data.error?.message ?? "Failed to fetch twins");
-  return data.data;
+  return data.data.twins;
 }
 
 export async function fetchTwin(employeeId: string): Promise<Twin> {
