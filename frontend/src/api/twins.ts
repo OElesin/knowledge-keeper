@@ -105,3 +105,53 @@ export async function queryTwin(employeeId: string, query: string): Promise<Quer
   if (!data.success) throw new Error(data.error?.message ?? "Failed to query twin");
   return data.data;
 }
+
+export interface EmployeeRecord {
+  employeeId: string;
+  name: string;
+  email: string;
+  role: string;
+  department: string;
+}
+
+export async function lookupEmployee(query: string): Promise<EmployeeRecord> {
+  const { data } = await apiClient.get<ApiResponse<EmployeeRecord>>(
+    "/directory/lookup",
+    { params: { query } },
+  );
+  if (!data.success) throw new Error(data.error?.message ?? "Lookup failed");
+  return data.data;
+}
+
+export interface DirectoryConfig {
+  provider: "microsoft" | "google" | null;
+  credentials_configured: boolean;
+}
+
+export interface DirectoryTestResult {
+  test_passed: boolean;
+  message?: string;
+}
+
+export interface SaveDirectoryConfigPayload {
+  provider: string;
+  credentials: Record<string, string>;
+}
+
+export async function getDirectoryConfig(): Promise<DirectoryConfig> {
+  const { data } = await apiClient.get<ApiResponse<DirectoryConfig>>("/admin/directory-config");
+  if (!data.success) throw new Error(data.error?.message ?? "Failed to fetch directory config");
+  return data.data;
+}
+
+export async function saveDirectoryConfig(payload: SaveDirectoryConfigPayload): Promise<DirectoryConfig> {
+  const { data } = await apiClient.put<ApiResponse<DirectoryConfig>>("/admin/directory-config", payload);
+  if (!data.success) throw new Error(data.error?.message ?? "Failed to save directory config");
+  return data.data;
+}
+
+export async function testDirectoryConnection(payload: SaveDirectoryConfigPayload): Promise<DirectoryTestResult> {
+  const { data } = await apiClient.post<ApiResponse<DirectoryTestResult>>("/admin/directory-config/test", payload);
+  if (!data.success) throw new Error(data.error?.message ?? "Failed to test directory connection");
+  return data.data;
+}

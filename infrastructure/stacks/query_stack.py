@@ -252,6 +252,21 @@ class KKQueryStack(Stack):
             )
         )
 
+        # Secrets Manager: directory credential management (directory-provider-setup)
+        admin_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=[
+                    "secretsmanager:CreateSecret",
+                    "secretsmanager:PutSecretValue",
+                    "secretsmanager:GetSecretValue",
+                    "secretsmanager:DescribeSecret",
+                ],
+                resources=[
+                    f"arn:aws:secretsmanager:{self.region}:{self.account}:secret:kk/{env_name}/directory-creds*"
+                ],
+            )
+        )
+
         # Lambda:InvokeFunction on email_fetcher and m365_email_fetcher (async invocation from admin)
         if ingestion_stack is not None:
             admin_role.add_to_policy(
@@ -282,6 +297,7 @@ class KKQueryStack(Stack):
                 "VECTOR_BUCKET_NAME": f"kk-{env_name}",
                 "VECTOR_INDEX_NAME": f"kk-{env_name}-chunks",
                 "RAW_ARCHIVES_BUCKET": storage_stack.raw_archives_bucket.bucket_name,
+                "ENVIRONMENT": env_name,
                 "EMAIL_FETCHER_FN_NAME": (
                     ingestion_stack.email_fetcher_fn.function_name
                     if ingestion_stack
@@ -348,6 +364,115 @@ class KKQueryStack(Stack):
             "DELETE", admin_integration, api_key_required=True,
         )
 
+        # /admin
+        admin_resource = self.api.root.add_resource("admin")
+
+        # /admin/directory-config
+        directory_config_resource = admin_resource.add_resource("directory-config")
+        # GET /admin/directory-config → admin (read directory config)
+        directory_config_resource.add_method(
+            "GET", admin_integration, api_key_required=True,
+        )
+        # PUT /admin/directory-config → admin (save directory config)
+        directory_config_resource.add_method(
+            "PUT", admin_integration, api_key_required=True,
+        )
+
+        # /admin/directory-config/test
+        directory_config_test_resource = directory_config_resource.add_resource("test")
+        # POST /admin/directory-config/test → admin (test directory connection)
+        directory_config_test_resource.add_method(
+            "POST", admin_integration, api_key_required=True,
+        )
+
+        # =====================================================================
+        # Lambda: directory_lookup
+        # =====================================================================
+        directory_lookup_code_path = str(
+            Path(__file__).resolve().parent.parent.parent
+            / "lambdas"
+            / "query"
+            / "directory_lookup"
+        )
+
+        # Dedicated IAM role — only Secrets Manager read + CloudWatch Logs
+        directory_lookup_role = iam.Role(
+            self,
+            "DirectoryLookupRole",
+            role_name=f"kk-{env_name}-directory-lookup",
+            assumed_by=iam.ServicePrincipal("lambda.amazonaws.com"),
+            managed_policies=[
+                iam.ManagedPolicy.from_aws_managed_policy_name(
+                    "service-role/AWSLambdaBasicExecutionRole"
+                ),
+            ],
+        )
+
+        directory_secret_name = (
+            self.node.try_get_context("directory_secret_name")
+            or f"kk/{env_name}/directory-creds"
+        )
+
+        directory_lookup_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["secretsmanager:GetSecretValue"],
+                resources=[
+                    f"arn:aws:secretsmanager:{self.region}:{self.account}:secret:{directory_secret_name}*"
+                ],
+            )
+        )
+
+        # DynamoDB:GetItem on Twins table for runtime config resolution
+        directory_lookup_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["dynamodb:GetItem"],
+                resources=[storage_stack.twins_table.table_arn],
+            )
+        )
+
+        # KMS decrypt for DynamoDB CMK
+        directory_lookup_role.add_to_policy(
+            iam.PolicyStatement(
+                actions=["kms:Decrypt"],
+                resources=[storage_stack.dynamo_kms_key.key_arn],
+            )
+        )
+
+        directory_provider = (
+            self.node.try_get_context("directory_provider") or "microsoft"
+        )
+
+        self.directory_lookup_fn = _lambda.Function(
+            self,
+            "DirectoryLookupFn",
+            function_name=f"kk-{env_name}-directory-lookup",
+            runtime=_lambda.Runtime.PYTHON_3_12,
+            handler="handler.handler",
+            code=_lambda.Code.from_asset(directory_lookup_code_path),
+            role=directory_lookup_role,
+            timeout=Duration.seconds(10),
+            memory_size=256,
+            layers=[storage_stack.shared_layer],
+            environment={
+                "DIRECTORY_PROVIDER": directory_provider,
+                "DIRECTORY_SECRET_NAME": directory_secret_name,
+                "TWINS_TABLE_NAME": storage_stack.twins_table.table_name,
+            },
+        )
+
+        # =====================================================================
+        # API Gateway — /directory/lookup GET route
+        # =====================================================================
+        directory_lookup_integration = apigateway.LambdaIntegration(
+            self.directory_lookup_fn
+        )
+
+        directory_resource = self.api.root.add_resource("directory")
+        lookup_resource = directory_resource.add_resource("lookup")
+        lookup_resource.add_method(
+            "GET", directory_lookup_integration, api_key_required=True,
+        )
+
         # --- Stack Outputs ---
         CfnOutput(self, "ApiUrl", value=self.api.url)
         CfnOutput(self, "ApiKeyId", value=self.api_key.key_id)
@@ -358,4 +483,8 @@ class KKQueryStack(Stack):
         CfnOutput(
             self, "AdminFnArn",
             value=self.admin_fn.function_arn,
+        )
+        CfnOutput(
+            self, "DirectoryLookupFnArn",
+            value=self.directory_lookup_fn.function_arn,
         )

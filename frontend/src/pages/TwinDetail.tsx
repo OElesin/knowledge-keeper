@@ -33,18 +33,24 @@ export default function TwinDetail() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <p className="text-sm text-gray-500">Loading twin details…</p>
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="flex items-center gap-3 text-sm text-slate-500">
+          <svg className="h-5 w-5 animate-spin text-brand-500" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          Loading twin details…
+        </div>
       </div>
     );
   }
 
   if (error || !twin) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+      <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">
           <p className="text-sm text-red-600">{(error as Error)?.message ?? "Twin not found"}</p>
-          <Link to="/" className="mt-2 inline-block text-sm text-indigo-600 hover:text-indigo-800">
+          <Link to="/" className="mt-2 inline-block text-sm font-medium text-brand-600 hover:text-brand-700">
             Back to dashboard
           </Link>
         </div>
@@ -52,80 +58,83 @@ export default function TwinDetail() {
     );
   }
 
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="mx-auto max-w-4xl px-4 py-8">
-        {/* Breadcrumb */}
-        <nav className="mb-6 text-sm text-gray-500">
-          <Link to="/" className="hover:text-indigo-600">Dashboard</Link>
-          <span className="mx-2">/</span>
-          <span className="text-gray-900">{twin.name}</span>
-        </nav>
+  const initials = twin.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
-        {/* Twin Metadata */}
-        <div className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-          <div className="flex items-start justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">{twin.name}</h1>
-              <p className="mt-1 text-sm text-gray-500">{twin.email}</p>
+  return (
+    <div className="min-h-screen">
+      {/* Page header */}
+      <header className="border-b border-slate-200/60 bg-white">
+        <div className="px-8 py-5">
+          <nav className="flex items-center gap-1.5 text-sm text-slate-500">
+            <Link to="/" className="hover:text-brand-600 transition-colors">Dashboard</Link>
+            <svg className="h-4 w-4 text-slate-300" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+            <span className="text-slate-900 font-medium">{twin.name}</span>
+          </nav>
+        </div>
+      </header>
+
+      <div className="px-8 py-6 space-y-6">
+        {/* Twin profile card */}
+        <div className="rounded-2xl border border-slate-200/60 bg-white p-6 shadow-sm">
+          <div className="flex items-start gap-5">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand-500 to-brand-700 text-lg font-bold text-white">
+              {initials}
             </div>
-            <TwinStatusBadge status={twin.status} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-3">
+                <h1 className="text-xl font-bold text-slate-900">{twin.name}</h1>
+                <TwinStatusBadge status={twin.status} />
+              </div>
+              <p className="mt-0.5 text-sm text-slate-500">{twin.email}</p>
+            </div>
+            {twin.status === "active" && (
+              <Link
+                to={`/twins/${twin.employeeId}/query`}
+                className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700"
+              >
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>
+                Query Twin
+              </Link>
+            )}
           </div>
 
           <dl className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-4">
-            <div>
-              <dt className="text-xs font-medium uppercase text-gray-500">Role</dt>
-              <dd className="mt-1 text-sm text-gray-900">{twin.role}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-medium uppercase text-gray-500">Department</dt>
-              <dd className="mt-1 text-sm text-gray-900">{twin.department}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-medium uppercase text-gray-500">Offboard Date</dt>
-              <dd className="mt-1 text-sm text-gray-900">{twin.offboardDate}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-medium uppercase text-gray-500">Chunks Indexed</dt>
-              <dd className="mt-1 text-sm text-gray-900">{twin.chunkCount.toLocaleString()}</dd>
-            </div>
+            {([
+              { label: "Role", value: twin.role },
+              { label: "Department", value: twin.department },
+              { label: "Offboard Date", value: twin.offboardDate },
+              { label: "Chunks Indexed", value: twin.chunkCount.toLocaleString() },
+            ] as const).map((item) => (
+              <div key={item.label} className="rounded-xl bg-slate-50 px-4 py-3">
+                <dt className="text-xs font-medium text-slate-500">{item.label}</dt>
+                <dd className="mt-1 text-sm font-semibold text-slate-900">{item.value}</dd>
+              </div>
+            ))}
           </dl>
-
-          {twin.status === "active" && (
-            <div className="mt-6">
-              <Link
-                to={`/twins/${twin.employeeId}/query`}
-                className="inline-flex items-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-              >
-                Query this Twin
-              </Link>
-            </div>
-          )}
         </div>
 
         {/* Access Control */}
-        <div className="mt-8 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-gray-900">Access Control</h2>
-          <p className="mt-1 text-sm text-gray-500">Manage who can query this digital twin.</p>
+        <div className="rounded-2xl border border-slate-200/60 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Access Control</h2>
+          <p className="mt-0.5 text-sm text-slate-500">Manage who can query this digital twin.</p>
 
-          {/* Grant Access Form */}
           <form onSubmit={handleGrantAccess} className="mt-4 flex items-end gap-3">
             <label className="block flex-1">
-              <span className="text-sm font-medium text-gray-700">User ID</span>
+              <span className="text-sm font-medium text-slate-700">User ID</span>
               <input
                 value={accessForm.userId}
                 onChange={(e) => setAccessForm((f) => ({ ...f, userId: e.target.value }))}
                 required
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
                 placeholder="user_456"
               />
             </label>
             <label className="block w-36">
-              <span className="text-sm font-medium text-gray-700">Role</span>
+              <span className="text-sm font-medium text-slate-700">Role</span>
               <select
                 value={accessForm.role}
                 onChange={(e) => setAccessForm((f) => ({ ...f, role: e.target.value as "admin" | "viewer" }))}
-                className="mt-1 block w-full rounded-md border border-gray-300 px-3 py-2 text-sm shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
+                className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
               >
                 <option value="viewer">Viewer</option>
                 <option value="admin">Admin</option>
@@ -134,7 +143,7 @@ export default function TwinDetail() {
             <button
               type="submit"
               disabled={grantAccess.isPending}
-              className="rounded-md bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 disabled:opacity-50"
             >
               {grantAccess.isPending ? "Granting…" : "Grant Access"}
             </button>
@@ -144,37 +153,32 @@ export default function TwinDetail() {
             <p className="mt-2 text-sm text-red-600" role="alert">{(grantAccess.error as Error).message}</p>
           )}
 
-          {/* Access List Table */}
-          <div className="mt-4 overflow-hidden rounded-md border border-gray-200">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
+          <div className="mt-5 overflow-hidden rounded-xl border border-slate-200">
+            <table className="min-w-full divide-y divide-slate-200">
+              <thead className="bg-slate-50">
                 <tr>
-                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">User ID</th>
-                  <th scope="col" className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500">Role</th>
-                  <th scope="col" className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-gray-500">Actions</th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-500">User ID</th>
+                  <th scope="col" className="px-4 py-3 text-left text-xs font-semibold text-slate-500">Role</th>
+                  <th scope="col" className="px-4 py-3 text-right text-xs font-semibold text-slate-500">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200">
+              <tbody className="divide-y divide-slate-100">
                 {accessLoading && (
-                  <tr>
-                    <td colSpan={3} className="px-4 py-6 text-center text-sm text-gray-500">Loading access list…</td>
-                  </tr>
+                  <tr><td colSpan={3} className="px-4 py-8 text-center text-sm text-slate-500">Loading access list…</td></tr>
                 )}
                 {!accessLoading && (!accessList || accessList.length === 0) && (
-                  <tr>
-                    <td colSpan={3} className="px-4 py-6 text-center text-sm text-gray-500">No users have access yet.</td>
-                  </tr>
+                  <tr><td colSpan={3} className="px-4 py-8 text-center text-sm text-slate-500">No users have access yet.</td></tr>
                 )}
                 {accessList?.map((record) => (
-                  <tr key={record.userId}>
-                    <td className="px-4 py-3 text-sm text-gray-900">{record.userId}</td>
-                    <td className="px-4 py-3 text-sm text-gray-700 capitalize">{record.role}</td>
+                  <tr key={record.userId} className="hover:bg-slate-50 transition-colors">
+                    <td className="px-4 py-3 text-sm text-slate-900">{record.userId}</td>
+                    <td className="px-4 py-3 text-sm text-slate-600 capitalize">{record.role}</td>
                     <td className="px-4 py-3 text-right">
                       <button
                         type="button"
                         onClick={() => revokeAccess.mutate(record.userId)}
                         disabled={revokeAccess.isPending}
-                        className="text-sm font-medium text-red-600 hover:text-red-800 disabled:opacity-50"
+                        className="text-sm font-medium text-red-600 hover:text-red-700 disabled:opacity-50 transition-colors"
                       >
                         Revoke
                       </button>
@@ -186,10 +190,10 @@ export default function TwinDetail() {
           </div>
         </div>
 
-        {/* Delete Twin */}
-        <div className="mt-8 rounded-lg border border-red-200 bg-white p-6 shadow-sm">
-          <h2 className="text-lg font-semibold text-gray-900">Danger Zone</h2>
-          <p className="mt-1 text-sm text-gray-500">
+        {/* Danger Zone */}
+        <div className="rounded-2xl border border-red-200/60 bg-white p-6 shadow-sm">
+          <h2 className="text-base font-semibold text-slate-900">Danger Zone</h2>
+          <p className="mt-0.5 text-sm text-slate-500">
             Permanently delete this digital twin and all associated data. This action cannot be undone.
           </p>
 
@@ -197,12 +201,12 @@ export default function TwinDetail() {
             <button
               type="button"
               onClick={() => setShowDeleteConfirm(true)}
-              className="mt-4 rounded-md border border-red-300 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
+              className="mt-4 rounded-xl border border-red-300 px-4 py-2.5 text-sm font-medium text-red-700 transition-colors hover:bg-red-50"
             >
               Delete Twin
             </button>
           ) : (
-            <div className="mt-4 rounded-md bg-red-50 p-4">
+            <div className="mt-4 rounded-xl bg-red-50 p-4">
               <p className="text-sm text-red-800">
                 Are you sure you want to delete <span className="font-semibold">{twin.name}</span>'s digital twin?
                 This will remove all vectors, access records, and raw archives.
@@ -212,14 +216,14 @@ export default function TwinDetail() {
                   type="button"
                   onClick={handleDelete}
                   disabled={deleteTwin.isPending}
-                  className="rounded-md bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                  className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-50"
                 >
                   {deleteTwin.isPending ? "Deleting…" : "Yes, Delete"}
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowDeleteConfirm(false)}
-                  className="rounded-md border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+                  className="rounded-xl border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
                 >
                   Cancel
                 </button>

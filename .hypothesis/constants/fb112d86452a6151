@@ -1,0 +1,4 @@
+# file: /Users/olalekanelesin/workspace/knowledgekeeper/lambdas/query/directory_lookup/logic.py
+# hypothesis_version: 6.151.9
+
+[200, 400, 401, 403, 404, 429, 500, 502, 504, 600, '$filter', '$select', '@', 'Authorization', 'DIRECTORY_AUTH_ERROR', 'DIRECTORY_TIMEOUT', 'EMPLOYEE_NOT_FOUND', 'Item', 'S', 'SETTINGS#directory', 'SecretString', 'VALIDATION_ERROR', 'access_token', 'admin', 'client_id', 'client_secret', 'code', 'data', 'delegated_admin', 'department', 'details', 'directory_v1', 'displayName', 'email', 'employeeId', 'error', 'fullName', 'google', 'id', 'jobTitle', 'mail', 'message', 'microsoft', 'name', 'organizations', 'primaryEmail', 'provider', 'role', 'secret_name', 'status_code', 'success', 'tenant_id', 'timed out', 'timeout', 'title', 'value']

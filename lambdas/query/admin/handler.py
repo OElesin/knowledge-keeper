@@ -71,8 +71,44 @@ class _LambdaHelper:
         )
 
 
+# ---------------------------------------------------------------------------
+# Lightweight Secrets Manager helper (used by directory config routes)
+# ---------------------------------------------------------------------------
+
+class _SecretsHelper:
+    """Thin wrapper around Secrets Manager for directory credential management."""
+
+    def __init__(self):
+        self._client = None
+
+    @property
+    def client(self):
+        if self._client is None:
+            self._client = boto3.client("secretsmanager")
+        return self._client
+
+    def describe_secret(self, secret_id: str) -> dict:
+        return self.client.describe_secret(SecretId=secret_id)
+
+    def get_secret_value(self, secret_id: str) -> dict:
+        return self.client.get_secret_value(SecretId=secret_id)
+
+    def put_secret_value(self, secret_id: str, secret_string: str) -> dict:
+        return self.client.put_secret_value(
+            SecretId=secret_id,
+            SecretString=secret_string,
+        )
+
+    def create_secret(self, name: str, secret_string: str) -> dict:
+        return self.client.create_secret(
+            Name=name,
+            SecretString=secret_string,
+        )
+
+
 s3_helper = _S3Helper()
 lambda_helper = _LambdaHelper()
+secrets_helper = _SecretsHelper()
 
 
 # ---------------------------------------------------------------------------
@@ -203,6 +239,25 @@ def _dispatch(
             employee_id, user_id_path, request_id,
             dynamo_module=dynamo_module,
         )
+
+    # GET /admin/directory-config
+    if method == "GET" and resource == "/admin/directory-config":
+        return logic.get_directory_config(
+            dynamo_module=dynamo_module,
+            secrets_module=secrets_helper,
+        )
+
+    # PUT /admin/directory-config
+    if method == "PUT" and resource == "/admin/directory-config":
+        return logic.save_directory_config(
+            body, request_id,
+            dynamo_module=dynamo_module,
+            secrets_module=secrets_helper,
+        )
+
+    # POST /admin/directory-config/test
+    if method == "POST" and resource == "/admin/directory-config/test":
+        return logic.test_directory_connection(body)
 
     return {
         "success": False,

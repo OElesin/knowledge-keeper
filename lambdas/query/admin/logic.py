@@ -1,12 +1,17 @@
 """Business logic for the admin Lambda.
 
-Handles twin CRUD, access management, and twin deletion (right to erasure).
+Handles twin CRUD, access management, twin deletion (right to erasure),
+and directory provider configuration.
 All AWS SDK interactions are injected as module dependencies for testability.
 """
 from __future__ import annotations
 
+import json as _json
 import logging
 import os
+import urllib.request
+import urllib.error
+import urllib.parse
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -17,6 +22,362 @@ DEFAULT_RETENTION_YEARS = 3
 REQUIRED_TWIN_FIELDS = ("employeeId", "name", "email", "role", "department", "offboardDate")
 
 VALID_PROVIDERS = {"google", "upload", "microsoft"}
+
+VALID_DIRECTORY_PROVIDERS = {"microsoft", "google"}
+
+MICROSOFT_REQUIRED_FIELDS = ("tenant_id", "client_id", "client_secret")
+GOOGLE_REQUIRED_FIELDS = ("service_account_key",)
+
+SETTINGS_KEY = "SETTINGS#directory"
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/directory-config
+# ---------------------------------------------------------------------------
+
+def get_directory_config(
+    *,
+    dynamo_module: Any,
+    secrets_module: Any,
+) -> dict:
+    """Return current directory provider and whether credentials are configured.
+
+    Never returns credential values (Req 1.2, 8.2).
+    Returns provider=None, credentials_configured=False when no record exists (Req 1.3).
+    """
+    record = dynamo_module.get_twin(SETTINGS_KEY)
+
+    if record is None:
+        return {
+            "success": True,
+            "status_code": 200,
+            "data": {"provider": None, "credentials_configured": False},
+        }
+
+    provider = record.get("provider")
+    secret_name = record.get("secret_name", "")
+
+    # Check secret existence — graceful degradation if call fails
+    credentials_configured = False
+    if secret_name:
+        try:
+            secrets_module.describe_secret(secret_name)
+            credentials_configured = True
+        except Exception:
+            logger.warning("Unable to verify secret existence for %s", secret_name)
+
+    return {
+        "success": True,
+        "status_code": 200,
+        "data": {"provider": provider, "credentials_configured": credentials_configured},
+    }
+
+
+# ---------------------------------------------------------------------------
+# Credential validation
+# ---------------------------------------------------------------------------
+
+def validate_credential_payload(provider: str, credentials: dict) -> list[str]:
+    """Validate directory provider credentials.
+
+    Returns a list of missing/invalid field names. Empty list means valid.
+    For unknown provider types, returns ``["VALIDATION_ERROR"]``.
+    """
+    if provider not in VALID_DIRECTORY_PROVIDERS:
+        return ["VALIDATION_ERROR"]
+
+    if provider == "microsoft":
+        return [
+            f for f in MICROSOFT_REQUIRED_FIELDS
+            if not credentials.get(f, "").strip()
+        ]
+
+    # provider == "google"
+    missing: list[str] = []
+    raw_key = credentials.get("service_account_key", "").strip()
+    if not raw_key:
+        missing.append("service_account_key")
+    else:
+        try:
+            _json.loads(raw_key)
+        except (ValueError, TypeError):
+            missing.append("service_account_key")
+    return missing
+
+
+# ---------------------------------------------------------------------------
+# PUT /admin/directory-config
+# ---------------------------------------------------------------------------
+
+def save_directory_config(
+    body: dict[str, Any],
+    request_id: str,
+    *,
+    dynamo_module: Any,
+    secrets_module: Any,
+) -> dict:
+    """Validate, store credentials in Secrets Manager, save settings to DynamoDB.
+
+    Never logs credential values (Req 8.1).
+    Overwrites any previously stored credentials (Req 2.7).
+    Writes audit log entry on success (Req 2.8).
+    """
+    provider = body.get("provider", "")
+    credentials = body.get("credentials", {})
+
+    # Validate provider and credentials
+    invalid_fields = validate_credential_payload(provider, credentials)
+    if invalid_fields:
+        # Unknown provider returns ["VALIDATION_ERROR"]
+        if invalid_fields == ["VALIDATION_ERROR"]:
+            return {
+                "success": False,
+                "status_code": 400,
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": f"Invalid provider '{provider}'. Valid providers: google, microsoft",
+                    "details": {},
+                },
+            }
+        return {
+            "success": False,
+            "status_code": 400,
+            "error": {
+                "code": "VALIDATION_ERROR",
+                "message": f"Missing required fields: {', '.join(invalid_fields)}",
+                "details": {"missing": invalid_fields},
+            },
+        }
+
+    env = os.environ.get("ENVIRONMENT", "dev")
+    secret_name = f"kk/{env}/directory-creds"
+    now = datetime.now(timezone.utc)
+
+    # Store credentials in Secrets Manager (overwrites previous — Req 2.7)
+    try:
+        secrets_module.put_secret_value(
+            secret_name,
+            _json.dumps(credentials),
+        )
+    except Exception:
+        logger.exception("Failed to store directory credentials")
+        return {
+            "success": False,
+            "status_code": 500,
+            "error": {
+                "code": "INTERNAL_ERROR",
+                "message": "Failed to store credentials",
+                "details": {},
+            },
+        }
+
+    # Save settings record to DynamoDB
+    try:
+        dynamo_module.update_twin(
+            SETTINGS_KEY,
+            {
+                "provider": provider,
+                "secret_name": secret_name,
+                "updated_at": now.isoformat(),
+                "updated_by": request_id,
+            },
+        )
+    except Exception:
+        logger.exception("Failed to save directory settings record")
+        return {
+            "success": False,
+            "status_code": 500,
+            "error": {
+                "code": "INTERNAL_ERROR",
+                "message": "Failed to save directory configuration",
+                "details": {},
+            },
+        }
+
+    # Audit log — never log credential values (Req 8.1)
+    dynamo_module.write_audit_log(
+        request_id=request_id,
+        action="save_directory_config",
+        details={"provider": provider},
+    )
+
+    return {
+        "success": True,
+        "status_code": 200,
+        "data": {"provider": provider, "credentials_configured": True},
+    }
+
+
+CONNECTION_TIMEOUT_SECONDS = 10
+
+
+# ---------------------------------------------------------------------------
+# POST /admin/directory-config/test
+# ---------------------------------------------------------------------------
+
+def _test_microsoft_connection(credentials: dict) -> dict:
+    """Acquire an OAuth2 client-credentials token from Microsoft Entra ID.
+
+    Returns ``{test_passed, message}``.  Never persists credentials (Req 3.4).
+    """
+    tenant_id = credentials["tenant_id"]
+    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    form_data = urllib.parse.urlencode({
+        "grant_type": "client_credentials",
+        "client_id": credentials["client_id"],
+        "client_secret": credentials["client_secret"],
+        "scope": "https://graph.microsoft.com/.default",
+    }).encode()
+
+    req = urllib.request.Request(token_url, data=form_data, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+
+    try:
+        with urllib.request.urlopen(req, timeout=CONNECTION_TIMEOUT_SECONDS) as resp:
+            if resp.status == 200:
+                return {"test_passed": True, "message": "Connection successful"}
+            return {"test_passed": False, "message": f"Unexpected status {resp.status}"}
+    except urllib.error.HTTPError as exc:
+        return {"test_passed": False, "message": f"Authentication failed: {exc.reason}"}
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        reason = str(exc.reason) if hasattr(exc, "reason") else str(exc)
+        if "timed out" in reason.lower() or isinstance(exc, TimeoutError):
+            return {
+                "test_passed": False,
+                "message": "Connection timed out after 10 seconds",
+            }
+        return {"test_passed": False, "message": f"Connection failed: {reason}"}
+
+
+def _test_google_connection(credentials: dict) -> dict:
+    """Build service-account credentials and call a lightweight Directory API endpoint.
+
+    Returns ``{test_passed, message}``.  Never persists credentials (Req 3.4).
+    """
+    import time
+    import base64
+
+    sa_key = _json.loads(credentials["service_account_key"])
+
+    # Build a self-signed JWT for the directory API scope
+    now = int(time.time())
+    header = base64.urlsafe_b64encode(
+        _json.dumps({"alg": "RS256", "typ": "JWT"}).encode()
+    ).rstrip(b"=")
+
+    claim_set = {
+        "iss": sa_key.get("client_email", ""),
+        "scope": "https://www.googleapis.com/auth/admin.directory.user.readonly",
+        "aud": "https://oauth2.googleapis.com/token",
+        "iat": now,
+        "exp": now + 300,
+    }
+    delegated_admin = credentials.get("delegated_admin", "")
+    if delegated_admin:
+        claim_set["sub"] = delegated_admin
+
+    payload = base64.urlsafe_b64encode(
+        _json.dumps(claim_set).encode()
+    ).rstrip(b"=")
+
+    signing_input = header + b"." + payload
+
+    # Sign with the service account private key
+    try:
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding
+
+        private_key = serialization.load_pem_private_key(
+            sa_key["private_key"].encode(), password=None,
+        )
+        signature = private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+        sig_b64 = base64.urlsafe_b64encode(signature).rstrip(b"=")
+    except Exception as exc:
+        return {
+            "test_passed": False,
+            "message": f"Failed to sign JWT: {exc}",
+        }
+
+    jwt_token = (signing_input + b"." + sig_b64).decode()
+
+    # Exchange JWT for access token
+    token_url = "https://oauth2.googleapis.com/token"
+    form_data = urllib.parse.urlencode({
+        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        "assertion": jwt_token,
+    }).encode()
+
+    req = urllib.request.Request(token_url, data=form_data, method="POST")
+    req.add_header("Content-Type", "application/x-www-form-urlencoded")
+
+    try:
+        with urllib.request.urlopen(req, timeout=CONNECTION_TIMEOUT_SECONDS) as resp:
+            if resp.status == 200:
+                return {"test_passed": True, "message": "Connection successful"}
+            return {"test_passed": False, "message": f"Unexpected status {resp.status}"}
+    except urllib.error.HTTPError as exc:
+        body = ""
+        try:
+            body = exc.read().decode()
+            err = _json.loads(body)
+            detail = err.get("error_description", exc.reason)
+        except Exception:
+            detail = exc.reason
+        return {"test_passed": False, "message": f"Authentication failed: {detail}"}
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        reason = str(exc.reason) if hasattr(exc, "reason") else str(exc)
+        if "timed out" in reason.lower() or isinstance(exc, TimeoutError):
+            return {
+                "test_passed": False,
+                "message": "Connection timed out after 10 seconds",
+            }
+        return {"test_passed": False, "message": f"Connection failed: {reason}"}
+
+
+def test_directory_connection(body: dict[str, Any]) -> dict:
+    """Test directory provider credentials without persisting anything.
+
+    Validates the payload, then attempts a lightweight authentication call
+    against the selected provider with a 10-second timeout.
+
+    Never stores credentials in Secrets Manager or DynamoDB (Req 3.4).
+    Never logs credential values (Req 8.1).
+    """
+    provider = body.get("provider", "")
+    credentials = body.get("credentials", {})
+
+    invalid_fields = validate_credential_payload(provider, credentials)
+    if invalid_fields:
+        if invalid_fields == ["VALIDATION_ERROR"]:
+            return {
+                "success": False,
+                "status_code": 400,
+                "error": {
+                    "code": "VALIDATION_ERROR",
+                    "message": f"Invalid provider '{provider}'. Valid providers: google, microsoft",
+                    "details": {},
+                },
+            }
+        return {
+            "success": False,
+            "status_code": 400,
+            "error": {
+                "code": "VALIDATION_ERROR",
+                "message": f"Missing required fields: {', '.join(invalid_fields)}",
+                "details": {"missing": invalid_fields},
+            },
+        }
+
+    if provider == "microsoft":
+        result = _test_microsoft_connection(credentials)
+    else:
+        result = _test_google_connection(credentials)
+
+    return {
+        "success": True,
+        "status_code": 200,
+        "data": result,
+    }
 
 
 # ---------------------------------------------------------------------------

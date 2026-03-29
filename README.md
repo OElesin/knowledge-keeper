@@ -5,10 +5,31 @@ An open-source, self-hosted platform that transforms departing employees' email 
 ## How It Works
 
 1. IT Admin triggers offboarding for a departing employee
-2. System ingests their email archive (Google Workspace or direct .mbox upload)
+2. System ingests their email archive (Google Workspace, Microsoft 365, or direct .mbox upload)
 3. Emails are parsed into threads, cleaned, PII-redacted, chunked, and embedded
 4. A digital twin is created — a queryable knowledge profile
 5. Authorized colleagues ask natural language questions and get cited, grounded answers
+
+## Features
+
+### Directory Employee Lookup
+
+Search for employees by email or ID directly from the offboarding form. KnowledgeKeeper queries your corporate directory (Microsoft Entra ID or Google Workspace) and auto-fills the form fields. To use it, type an email or employee ID into the lookup field at the top of the offboarding form and click "Lookup".
+
+### Directory Provider Settings
+
+Configure your directory provider from the Admin Dashboard — no CDK redeployments or AWS console access needed. Navigate to `/settings` (or click "Settings" in the dashboard header) to:
+
+1. Select your provider (Microsoft Entra ID or Google Workspace)
+2. Enter credentials (tenant ID / client ID / client secret for Microsoft, or service account JSON key for Google)
+3. Click "Test Connection" to verify credentials work before saving
+4. Click "Save" to persist — credentials are stored in AWS Secrets Manager, never in the browser
+
+The directory lookup Lambda picks up the new config at runtime from DynamoDB, so changes take effect immediately.
+
+### Microsoft 365 Email Ingestion
+
+Ingest emails from Microsoft 365 mailboxes in addition to Google Workspace. When offboarding an employee, select "Microsoft 365" as the provider. The system authenticates via the Microsoft Graph API using app credentials stored in Secrets Manager (`kk/{env}/m365-credentials`), fetches all mail folders (excluding Deleted Items and Junk Email), converts messages to .mbox format, and uploads them to S3. The downstream pipeline handles the rest — no changes needed.
 
 ## Architecture
 
@@ -104,6 +125,17 @@ For the full walkthrough including Bedrock model access, Google Workspace setup,
 - API key authentication on all endpoints
 - Audit trail for every query and admin action
 - No public S3 buckets, no hardcoded credentials
+
+## Roadmap
+
+| Status | Feature | Description |
+|--------|---------|-------------|
+| ✅ Done | Core Platform (MVP) | Email ingestion pipeline, RAG query engine, admin dashboard, access control, twin lifecycle management |
+| ✅ Done | Directory Employee Lookup | Auto-fill offboarding form by looking up employees from Microsoft Entra ID or Google Workspace directories |
+| ✅ Done | Directory Provider Setup | Self-service UI for IT admins to configure directory provider credentials without CDK redeployments |
+| ✅ Done | Microsoft 365 Email Integration | Ingest departing employees' email archives from M365 mailboxes via Microsoft Graph API |
+| 📋 Planned | SharePoint Document Ingestion | Capture OneDrive/SharePoint documents alongside emails, with text extraction, deduplication, and PII detection |
+| 📋 Planned | Google Drive Document Ingestion | Capture Google Drive documents (including native Docs/Sheets/Slides export) alongside emails |
 
 ## License
 
