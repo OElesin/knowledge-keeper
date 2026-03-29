@@ -1,8 +1,8 @@
 """Business logic for the directory_lookup Lambda.
 
-Looks up employee information from Microsoft Entra ID (Graph API)
-or Google Workspace (Admin SDK Directory API) and returns a
-normalized Employee_Record.
+Looks up employee information from Microsoft Entra ID (Graph API),
+Google Workspace (Admin SDK Directory API), or an LDAP directory
+and returns a normalized Employee_Record.
 """
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ import json
 import logging
 from typing import Any, Protocol
 
+import ldap3
+from ldap3.core.exceptions import LDAPBindError, LDAPSocketOpenError, LDAPSocketReceiveError
 import msal
 import requests
 
@@ -65,6 +67,17 @@ def _normalize_google(directory_user: dict) -> dict:
         "role": first_org.get("title") or "",
         "department": first_org.get("department") or "",
     }
+
+def _normalize_ldap(entry_attributes: dict) -> dict:
+    """Map LDAP entry attributes to Employee_Record."""
+    return {
+        "employeeId": entry_attributes.get("uid") or "",
+        "name": entry_attributes.get("cn") or "",
+        "email": entry_attributes.get("mail") or "",
+        "role": entry_attributes.get("title") or "",
+        "department": entry_attributes.get("departmentNumber") or "",
+    }
+
 
 
 def _handle_http_error(status_code: int) -> dict:
@@ -244,6 +257,105 @@ def _lookup_google(
     return _success(_normalize_google(user))
 
 
+def _lookup_ldap(
+    query: str,
+    secret_name: str,
+    secrets_client: SecretsClient,
+) -> dict:
+    """Look up an employee via LDAP search.
+
+    Retrieves LDAP connection params from Secrets Manager, connects with
+    simple bind, searches using the configured filter template with {query}
+    substituted, and normalizes the first matching entry to Employee_Record.
+    """
+    # 1. Retrieve credentials
+    try:
+        resp = secrets_client.get_secret_value(SecretId=secret_name)
+        creds = json.loads(resp["SecretString"])
+    except Exception:
+        logger.warning("Failed to retrieve directory credentials from Secrets Manager")
+        return _error(
+            500,
+            "CREDENTIALS_UNAVAILABLE",
+            "Unable to retrieve directory credentials.",
+        )
+
+    server_url = creds.get("server_url", "")
+    port = int(creds.get("port", "389"))
+    bind_dn = creds.get("bind_dn", "")
+    bind_password = creds.get("bind_password", "")
+    search_base_dn = creds.get("search_base_dn", "")
+    search_filter_template = creds.get("search_filter_template", "")
+
+    # 2. Validate filter template
+    if "{query}" not in search_filter_template:
+        return _error(
+            500,
+            "PROVIDER_NOT_CONFIGURED",
+            "The LDAP search filter template is invalid — it must contain {query}.",
+        )
+
+    # 3. Substitute query into filter
+    search_filter = search_filter_template.replace("{query}", query)
+
+    # 4. Connect, bind, and search
+    try:
+        server = ldap3.Server(server_url, port=port, get_info=ldap3.NONE)
+        conn = ldap3.Connection(
+            server,
+            user=bind_dn,
+            password=bind_password,
+            authentication=ldap3.SIMPLE,
+            receive_timeout=REQUEST_TIMEOUT,
+            auto_bind=True,
+        )
+
+        conn.search(
+            search_base=search_base_dn,
+            search_filter=search_filter,
+            attributes=["uid", "cn", "mail", "title", "departmentNumber"],
+        )
+
+        entries = conn.entries
+        conn.unbind()
+
+        if not entries:
+            return _error(
+                404,
+                "EMPLOYEE_NOT_FOUND",
+                "No employee found matching the provided query.",
+            )
+
+        first = entries[0].entry_attributes_as_dict
+        # ldap3 returns lists for attribute values; take the first element
+        flat = {}
+        for key, val in first.items():
+            if isinstance(val, list):
+                flat[key] = val[0] if val else ""
+            else:
+                flat[key] = val
+        return _success(_normalize_ldap(flat))
+
+    except LDAPBindError:
+        return _error(
+            502,
+            "DIRECTORY_AUTH_ERROR",
+            "LDAP bind credentials are invalid.",
+        )
+    except LDAPSocketOpenError:
+        return _error(
+            502,
+            "DIRECTORY_UNAVAILABLE",
+            "The LDAP server is unreachable.",
+        )
+    except LDAPSocketReceiveError:
+        return _error(
+            504,
+            "DIRECTORY_TIMEOUT",
+            "The directory provider did not respond within 10 seconds.",
+        )
+
+
 def lookup_employee(
     query: str,
     provider: str,
@@ -265,7 +377,7 @@ def lookup_employee(
         )
 
     # Validate provider
-    if provider not in ("microsoft", "google"):
+    if provider not in ("microsoft", "google", "ldap"):
         return _error(
             500,
             "PROVIDER_NOT_CONFIGURED",
@@ -274,6 +386,9 @@ def lookup_employee(
 
     if provider == "microsoft":
         return _lookup_microsoft(query, secret_name, secrets_client)
+
+    if provider == "ldap":
+        return _lookup_ldap(query, secret_name, secrets_client)
 
     return _lookup_google(query, secret_name, secrets_client)
 

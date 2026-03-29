@@ -23,10 +23,11 @@ REQUIRED_TWIN_FIELDS = ("employeeId", "name", "email", "role", "department", "of
 
 VALID_PROVIDERS = {"google", "upload", "microsoft"}
 
-VALID_DIRECTORY_PROVIDERS = {"microsoft", "google"}
+VALID_DIRECTORY_PROVIDERS = {"microsoft", "google", "ldap"}
 
 MICROSOFT_REQUIRED_FIELDS = ("tenant_id", "client_id", "client_secret")
 GOOGLE_REQUIRED_FIELDS = ("service_account_key",)
+LDAP_REQUIRED_FIELDS = ("server_url", "bind_dn", "bind_password", "search_base_dn")
 
 SETTINGS_KEY = "SETTINGS#directory"
 
@@ -92,6 +93,12 @@ def validate_credential_payload(provider: str, credentials: dict) -> list[str]:
             if not credentials.get(f, "").strip()
         ]
 
+    if provider == "ldap":
+        return [
+            f for f in LDAP_REQUIRED_FIELDS
+            if not credentials.get(f, "").strip()
+        ]
+
     # provider == "google"
     missing: list[str] = []
     raw_key = credentials.get("service_account_key", "").strip()
@@ -135,7 +142,7 @@ def save_directory_config(
                 "status_code": 400,
                 "error": {
                     "code": "VALIDATION_ERROR",
-                    "message": f"Invalid provider '{provider}'. Valid providers: google, microsoft",
+                    "message": f"Invalid provider '{provider}'. Valid providers: google, ldap, microsoft",
                     "details": {},
                 },
             }
@@ -148,6 +155,13 @@ def save_directory_config(
                 "details": {"missing": invalid_fields},
             },
         }
+
+    # Apply LDAP defaults for optional fields before storing (Req 3.2, 3.3, 3.5)
+    if provider == "ldap":
+        if not credentials.get("port", "").strip():
+            credentials["port"] = "389"
+        if not credentials.get("search_filter_template", "").strip():
+            credentials["search_filter_template"] = "(|(mail={query})(uid={query}))"
 
     env = os.environ.get("ENVIRONMENT", "dev")
     secret_name = f"kk/{env}/directory-creds"
@@ -334,6 +348,41 @@ def _test_google_connection(credentials: dict) -> dict:
         return {"test_passed": False, "message": f"Connection failed: {reason}"}
 
 
+def _test_ldap_connection(credentials: dict) -> dict:
+    """Connect to an LDAP server and perform a simple bind.
+
+    Returns ``{test_passed, message}``.  10-second timeout.
+    Never persists credentials (Req 4.4).
+    """
+    import ldap3
+    from ldap3.core.exceptions import LDAPBindError, LDAPSocketOpenError, LDAPSocketReceiveError
+
+    server_url = credentials["server_url"]
+    port = int(credentials.get("port") or 389)
+    bind_dn = credentials["bind_dn"]
+    bind_password = credentials["bind_password"]
+
+    try:
+        server = ldap3.Server(server_url, port=port, connect_timeout=CONNECTION_TIMEOUT_SECONDS)
+        conn = ldap3.Connection(
+            server,
+            user=bind_dn,
+            password=bind_password,
+            auto_bind=True,
+            receive_timeout=CONNECTION_TIMEOUT_SECONDS,
+        )
+        conn.unbind()
+        return {"test_passed": True, "message": "Connection successful"}
+    except LDAPBindError as exc:
+        return {"test_passed": False, "message": f"LDAP bind failed: {exc}"}
+    except LDAPSocketOpenError as exc:
+        return {"test_passed": False, "message": f"LDAP server unreachable: {exc}"}
+    except (LDAPSocketReceiveError, TimeoutError) as exc:
+        return {"test_passed": False, "message": "Connection timed out after 10 seconds"}
+    except Exception as exc:
+        return {"test_passed": False, "message": f"Connection failed: {exc}"}
+
+
 def test_directory_connection(body: dict[str, Any]) -> dict:
     """Test directory provider credentials without persisting anything.
 
@@ -354,7 +403,7 @@ def test_directory_connection(body: dict[str, Any]) -> dict:
                 "status_code": 400,
                 "error": {
                     "code": "VALIDATION_ERROR",
-                    "message": f"Invalid provider '{provider}'. Valid providers: google, microsoft",
+                    "message": f"Invalid provider '{provider}'. Valid providers: google, ldap, microsoft",
                     "details": {},
                 },
             }
@@ -370,6 +419,8 @@ def test_directory_connection(body: dict[str, Any]) -> dict:
 
     if provider == "microsoft":
         result = _test_microsoft_connection(credentials)
+    elif provider == "ldap":
+        result = _test_ldap_connection(credentials)
     else:
         result = _test_google_connection(credentials)
 

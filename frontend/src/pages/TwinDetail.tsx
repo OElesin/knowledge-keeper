@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useTwin, useDeleteTwin, useAccess, useGrantAccess, useRevokeAccess } from "../hooks/useTwins";
 import TwinStatusBadge from "../components/TwinStatusBadge";
-import type { GrantAccessPayload } from "../api/twins";
+import type { GrantAccessPayload, EmployeeRecord } from "../api/twins";
+import { lookupEmployee } from "../api/twins";
 
 export default function TwinDetail() {
   const { employeeId } = useParams<{ employeeId: string }>();
@@ -17,11 +18,49 @@ export default function TwinDetail() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [accessForm, setAccessForm] = useState<GrantAccessPayload>({ userId: "", role: "viewer" });
 
+  const [lookupQuery, setLookupQuery] = useState("");
+  const [lookupResult, setLookupResult] = useState<EmployeeRecord | null>(null);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError] = useState<string | null>(null);
+  const [lookupTimer, setLookupTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
+
+  const debouncedLookup = useCallback((query: string) => {
+    if (lookupTimer) clearTimeout(lookupTimer);
+    setLookupResult(null);
+    setLookupError(null);
+
+    if (query.trim().length < 2) return;
+
+    const timer = setTimeout(async () => {
+      setLookupLoading(true);
+      try {
+        const result = await lookupEmployee(query.trim());
+        setLookupResult(result);
+        setAccessForm((f) => ({ ...f, userId: result.employeeId }));
+      } catch {
+        setLookupError("No match found — you can enter a User ID manually below");
+      } finally {
+        setLookupLoading(false);
+      }
+    }, 400);
+    setLookupTimer(timer);
+  }, [lookupTimer]);
+
+  function clearLookup() {
+    setLookupQuery("");
+    setLookupResult(null);
+    setLookupError(null);
+    setAccessForm((f) => ({ ...f, userId: "" }));
+  }
+
   function handleGrantAccess(e: React.FormEvent) {
     e.preventDefault();
     if (!accessForm.userId.trim()) return;
     grantAccess.mutate(accessForm, {
-      onSuccess: () => setAccessForm({ userId: "", role: "viewer" }),
+      onSuccess: () => {
+        setAccessForm({ userId: "", role: "viewer" });
+        clearLookup();
+      },
     });
   }
 
@@ -118,35 +157,81 @@ export default function TwinDetail() {
           <h2 className="text-base font-semibold text-slate-900">Access Control</h2>
           <p className="mt-0.5 text-sm text-slate-500">Manage who can query this digital twin.</p>
 
-          <form onSubmit={handleGrantAccess} className="mt-4 flex items-end gap-3">
-            <label className="block flex-1">
-              <span className="text-sm font-medium text-slate-700">User ID</span>
-              <input
-                value={accessForm.userId}
-                onChange={(e) => setAccessForm((f) => ({ ...f, userId: e.target.value }))}
-                required
-                className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
-                placeholder="user_456"
-              />
+          <form onSubmit={handleGrantAccess} className="mt-4 space-y-3">
+            {/* Directory lookup search */}
+            <label className="block">
+              <span className="text-sm font-medium text-slate-700">Search by email or employee ID</span>
+              <div className="relative mt-1.5">
+                <input
+                  value={lookupQuery}
+                  onChange={(e) => {
+                    setLookupQuery(e.target.value);
+                    debouncedLookup(e.target.value);
+                  }}
+                  className="block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 pr-10 text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
+                  placeholder="jane.chen@example.com"
+                />
+                {lookupLoading && (
+                  <div className="absolute inset-y-0 right-3 flex items-center">
+                    <svg className="h-4 w-4 animate-spin text-slate-400" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  </div>
+                )}
+              </div>
             </label>
-            <label className="block w-36">
-              <span className="text-sm font-medium text-slate-700">Role</span>
-              <select
-                value={accessForm.role}
-                onChange={(e) => setAccessForm((f) => ({ ...f, role: e.target.value as "admin" | "viewer" }))}
-                className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
+
+            {/* Lookup result card */}
+            {lookupResult && (
+              <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <svg className="h-5 w-5 shrink-0 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div className="min-w-0 flex-1 text-sm">
+                  <p className="font-medium text-slate-900">{lookupResult.name}</p>
+                  <p className="text-slate-500">{lookupResult.email} · {lookupResult.employeeId}</p>
+                </div>
+                <button type="button" onClick={clearLookup} className="text-xs font-medium text-slate-500 hover:text-slate-700">Clear</button>
+              </div>
+            )}
+
+            {/* Lookup error — fallback to manual */}
+            {lookupError && (
+              <p className="text-xs text-amber-600">{lookupError}</p>
+            )}
+
+            {/* Manual User ID — always visible so admin can type directly */}
+            <div className="flex items-end gap-3">
+              <label className="block flex-1">
+                <span className="text-sm font-medium text-slate-700">User ID</span>
+                <input
+                  value={accessForm.userId}
+                  onChange={(e) => setAccessForm((f) => ({ ...f, userId: e.target.value }))}
+                  required
+                  className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
+                  placeholder="user_456"
+                />
+              </label>
+              <label className="block w-36">
+                <span className="text-sm font-medium text-slate-700">Role</span>
+                <select
+                  value={accessForm.role}
+                  onChange={(e) => setAccessForm((f) => ({ ...f, role: e.target.value as "admin" | "viewer" }))}
+                  className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
+                >
+                  <option value="viewer">Viewer</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+              <button
+                type="submit"
+                disabled={grantAccess.isPending}
+                className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 disabled:opacity-50"
               >
-                <option value="viewer">Viewer</option>
-                <option value="admin">Admin</option>
-              </select>
-            </label>
-            <button
-              type="submit"
-              disabled={grantAccess.isPending}
-              className="rounded-xl bg-brand-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 disabled:opacity-50"
-            >
-              {grantAccess.isPending ? "Granting…" : "Grant Access"}
-            </button>
+                {grantAccess.isPending ? "Granting…" : "Grant Access"}
+              </button>
+            </div>
           </form>
 
           {grantAccess.isError && (

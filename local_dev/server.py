@@ -26,6 +26,8 @@ CORS(app)
 TWINS: dict[str, dict] = {}
 ACCESS: dict[str, dict] = {}  # key = "{userId}:{employeeId}"
 AUDIT: list[dict] = []
+DIRECTORY_CONFIG: dict = {"provider": None, "credentials_configured": False}
+DIRECTORY_CREDENTIALS: dict = {}  # stored credentials (never returned in responses)
 
 # ---------------------------------------------------------------------------
 # Seed data
@@ -411,6 +413,170 @@ def ingestion_status(employee_id):
         "chunkCount": twin.get("chunkCount", 0),
         "topicIndex": twin.get("topicIndex", []),
     })
+
+
+# ---------------------------------------------------------------------------
+# Directory configuration routes
+# ---------------------------------------------------------------------------
+
+VALID_DIRECTORY_PROVIDERS = {"microsoft", "google", "ldap"}
+
+MICROSOFT_REQUIRED_FIELDS = ("tenant_id", "client_id", "client_secret")
+GOOGLE_REQUIRED_FIELDS = ("service_account_key",)
+LDAP_REQUIRED_FIELDS = ("server_url", "bind_dn", "bind_password", "search_base_dn")
+
+# Mock employee directory for lookup responses
+MOCK_DIRECTORY = {
+    "jane.chen@example.com": {
+        "employeeId": "emp_001",
+        "name": "Jane Chen",
+        "email": "jane.chen@example.com",
+        "role": "Senior SRE",
+        "department": "Platform Engineering",
+    },
+    "emp_001": {
+        "employeeId": "emp_001",
+        "name": "Jane Chen",
+        "email": "jane.chen@example.com",
+        "role": "Senior SRE",
+        "department": "Platform Engineering",
+    },
+    "marcus.r@example.com": {
+        "employeeId": "emp_002",
+        "name": "Marcus Rivera",
+        "email": "marcus.r@example.com",
+        "role": "Engineering Manager",
+        "department": "Backend Services",
+    },
+    "emp_002": {
+        "employeeId": "emp_002",
+        "name": "Marcus Rivera",
+        "email": "marcus.r@example.com",
+        "role": "Engineering Manager",
+        "department": "Backend Services",
+    },
+}
+
+
+def _validate_credentials(provider, credentials):
+    """Return list of missing required field names."""
+    if provider == "microsoft":
+        return [f for f in MICROSOFT_REQUIRED_FIELDS if not (credentials.get(f) or "").strip()]
+    if provider == "google":
+        return [f for f in GOOGLE_REQUIRED_FIELDS if not (credentials.get(f) or "").strip()]
+    if provider == "ldap":
+        return [f for f in LDAP_REQUIRED_FIELDS if not (credentials.get(f) or "").strip()]
+    return ["VALIDATION_ERROR"]
+
+
+@app.route("/admin/directory-config", methods=["GET"])
+def get_directory_config():
+    return _envelope(data=DIRECTORY_CONFIG)
+
+
+@app.route("/admin/directory-config", methods=["PUT"])
+def save_directory_config():
+    body = request.get_json(silent=True) or {}
+    provider = body.get("provider", "")
+    credentials = body.get("credentials", {})
+
+    if provider not in VALID_DIRECTORY_PROVIDERS:
+        return _envelope(
+            error={
+                "code": "VALIDATION_ERROR",
+                "message": f"Invalid provider '{provider}'. Valid providers: google, ldap, microsoft",
+                "details": {},
+            },
+            status_code=400,
+        )
+
+    missing = _validate_credentials(provider, credentials)
+    if missing:
+        return _envelope(
+            error={
+                "code": "VALIDATION_ERROR",
+                "message": f"Missing required fields: {', '.join(missing)}",
+                "details": {"missing": missing},
+            },
+            status_code=400,
+        )
+
+    # Apply LDAP defaults
+    if provider == "ldap":
+        if not (credentials.get("port") or "").strip():
+            credentials["port"] = "389"
+        if not (credentials.get("search_filter_template") or "").strip():
+            credentials["search_filter_template"] = "(|(mail={query})(uid={query}))"
+
+    DIRECTORY_CREDENTIALS.clear()
+    DIRECTORY_CREDENTIALS.update(credentials)
+    DIRECTORY_CONFIG["provider"] = provider
+    DIRECTORY_CONFIG["credentials_configured"] = True
+
+    return _envelope(data={"provider": provider, "credentials_configured": True})
+
+
+@app.route("/admin/directory-config/test", methods=["POST"])
+def test_directory_connection():
+    body = request.get_json(silent=True) or {}
+    provider = body.get("provider", "")
+    credentials = body.get("credentials", {})
+
+    if provider not in VALID_DIRECTORY_PROVIDERS:
+        return _envelope(
+            error={
+                "code": "VALIDATION_ERROR",
+                "message": f"Invalid provider '{provider}'. Valid providers: google, ldap, microsoft",
+                "details": {},
+            },
+            status_code=400,
+        )
+
+    missing = _validate_credentials(provider, credentials)
+    if missing:
+        return _envelope(
+            error={
+                "code": "VALIDATION_ERROR",
+                "message": f"Missing required fields: {', '.join(missing)}",
+                "details": {"missing": missing},
+            },
+            status_code=400,
+        )
+
+    # Mock: always succeed for valid payloads
+    return _envelope(data={"test_passed": True, "message": "Connection successful"})
+
+
+@app.route("/directory/lookup", methods=["GET"])
+def directory_lookup():
+    query = (request.args.get("query") or "").strip()
+    if not query:
+        return _envelope(
+            error={"code": "VALIDATION_ERROR", "message": "query parameter is required", "details": {}},
+            status_code=400,
+        )
+
+    provider = DIRECTORY_CONFIG.get("provider")
+    if not provider:
+        return _envelope(
+            error={"code": "PROVIDER_NOT_CONFIGURED", "message": "No directory provider configured", "details": {}},
+            status_code=500,
+        )
+
+    if not DIRECTORY_CONFIG.get("credentials_configured"):
+        return _envelope(
+            error={"code": "CREDENTIALS_UNAVAILABLE", "message": "Directory credentials not configured", "details": {}},
+            status_code=500,
+        )
+
+    record = MOCK_DIRECTORY.get(query)
+    if record is None:
+        return _envelope(
+            error={"code": "EMPLOYEE_NOT_FOUND", "message": f"No employee found for query '{query}'", "details": {}},
+            status_code=404,
+        )
+
+    return _envelope(data=record)
 
 
 # ---------------------------------------------------------------------------

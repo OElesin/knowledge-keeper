@@ -7,7 +7,7 @@ import {
   type DirectoryConfig,
 } from "../api/twins";
 
-type ProviderType = "microsoft" | "google";
+type ProviderType = "microsoft" | "google" | "ldap";
 
 interface MicrosoftCreds {
   tenant_id: string;
@@ -20,8 +20,25 @@ interface GoogleCreds {
   delegated_admin: string;
 }
 
+interface LdapCreds {
+  server_url: string;
+  port: string;
+  bind_dn: string;
+  bind_password: string;
+  search_base_dn: string;
+  search_filter_template: string;
+}
+
 const emptyMicrosoft: MicrosoftCreds = { tenant_id: "", client_id: "", client_secret: "" };
 const emptyGoogle: GoogleCreds = { service_account_key: "", delegated_admin: "" };
+const emptyLdap: LdapCreds = {
+  server_url: "",
+  port: "389",
+  bind_dn: "",
+  bind_password: "",
+  search_base_dn: "",
+  search_filter_template: "(|(mail={query})(uid={query}))",
+};
 
 export default function SettingsPage() {
   const [config, setConfig] = useState<DirectoryConfig | null>(null);
@@ -31,6 +48,7 @@ export default function SettingsPage() {
   const [provider, setProvider] = useState<ProviderType | null>(null);
   const [microsoftCreds, setMicrosoftCreds] = useState<MicrosoftCreds>({ ...emptyMicrosoft });
   const [googleCreds, setGoogleCreds] = useState<GoogleCreds>({ ...emptyGoogle });
+  const [ldapCreds, setLdapCreds] = useState<LdapCreds>({ ...emptyLdap });
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ passed: boolean; message: string } | null>(null);
@@ -58,6 +76,9 @@ export default function SettingsPage() {
   function buildCredentials(): Record<string, string> {
     if (provider === "microsoft") {
       return { ...microsoftCreds };
+    }
+    if (provider === "ldap") {
+      return { ...ldapCreds };
     }
     const creds: Record<string, string> = { service_account_key: googleCreds.service_account_key };
     if (googleCreds.delegated_admin.trim()) {
@@ -96,6 +117,7 @@ export default function SettingsPage() {
       // Clear credential fields after successful save (Req 8.3)
       setMicrosoftCreds({ ...emptyMicrosoft });
       setGoogleCreds({ ...emptyGoogle });
+      setLdapCreds({ ...emptyLdap });
     } catch (err) {
       setSaveResult({ ok: false, message: err instanceof Error ? err.message : "Save failed" });
     } finally {
@@ -109,8 +131,21 @@ export default function SettingsPage() {
     setSaveResult(null);
   }
 
+  function hasRequiredFields(): boolean {
+    if (!provider) return false;
+    if (provider === "microsoft") {
+      return !!(microsoftCreds.tenant_id.trim() && microsoftCreds.client_id.trim() && microsoftCreds.client_secret.trim());
+    }
+    if (provider === "google") {
+      return !!googleCreds.service_account_key.trim();
+    }
+    // ldap
+    return !!(ldapCreds.server_url.trim() && ldapCreds.bind_dn.trim() && ldapCreds.bind_password.trim() && ldapCreds.search_base_dn.trim());
+  }
+
   const busy = testing || saving;
   const noProvider = !provider;
+  const missingRequired = !hasRequiredFields();
 
   if (loading) {
     return (
@@ -163,6 +198,7 @@ export default function SettingsPage() {
                 <span className="font-medium text-slate-900">
                   {config.provider === "microsoft" && "Microsoft Entra ID"}
                   {config.provider === "google" && "Google Workspace"}
+                  {config.provider === "ldap" && "LDAP"}
                   {!config.provider && "Not configured"}
                 </span>
               </div>
@@ -198,6 +234,7 @@ export default function SettingsPage() {
                 {([
                   { value: "microsoft" as const, label: "Microsoft Entra ID" },
                   { value: "google" as const, label: "Google Workspace" },
+                  { value: "ldap" as const, label: "LDAP" },
                 ]).map((opt) => (
                   <label
                     key={opt.value}
@@ -227,16 +264,16 @@ export default function SettingsPage() {
             <div className="rounded-2xl border border-slate-200/60 bg-white p-5 shadow-sm">
               <h2 className="text-sm font-semibold text-slate-900">Credentials</h2>
               <p className="mt-0.5 text-xs text-slate-500">
-                {provider === "microsoft"
-                  ? "Enter your Microsoft Entra ID app registration credentials"
-                  : "Paste your Google Workspace service account JSON key"}
+                {provider === "microsoft" && "Enter your Microsoft Entra ID app registration credentials"}
+                {provider === "google" && "Paste your Google Workspace service account JSON key"}
+                {provider === "ldap" && "Enter your LDAP server connection details"}
               </p>
 
               <div className="mt-4 space-y-4">
                 {provider === "microsoft" && (
                   <>
                     <label className="block">
-                      <span className="text-sm font-medium text-slate-700">Tenant ID</span>
+                      <span className="text-sm font-medium text-slate-700">Tenant ID <span className="text-red-500">*</span></span>
                       <input
                         type="text"
                         value={microsoftCreds.tenant_id}
@@ -246,7 +283,7 @@ export default function SettingsPage() {
                       />
                     </label>
                     <label className="block">
-                      <span className="text-sm font-medium text-slate-700">Client ID</span>
+                      <span className="text-sm font-medium text-slate-700">Client ID <span className="text-red-500">*</span></span>
                       <input
                         type="text"
                         value={microsoftCreds.client_id}
@@ -256,7 +293,7 @@ export default function SettingsPage() {
                       />
                     </label>
                     <label className="block">
-                      <span className="text-sm font-medium text-slate-700">Client Secret</span>
+                      <span className="text-sm font-medium text-slate-700">Client Secret <span className="text-red-500">*</span></span>
                       <input
                         type="password"
                         value={microsoftCreds.client_secret}
@@ -272,7 +309,7 @@ export default function SettingsPage() {
                 {provider === "google" && (
                   <>
                     <label className="block">
-                      <span className="text-sm font-medium text-slate-700">Service Account Key (JSON)</span>
+                      <span className="text-sm font-medium text-slate-700">Service Account Key (JSON) <span className="text-red-500">*</span></span>
                       <textarea
                         value={googleCreds.service_account_key}
                         onChange={(e) => setGoogleCreds((c) => ({ ...c, service_account_key: e.target.value }))}
@@ -295,6 +332,78 @@ export default function SettingsPage() {
                         className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
                       />
                     </label>
+                  </>
+                )}
+
+                {provider === "ldap" && (
+                  <>
+                    <label className="block">
+                      <span className="text-sm font-medium text-slate-700">Server URL <span className="text-red-500">*</span></span>
+                      <input
+                        type="text"
+                        value={ldapCreds.server_url}
+                        onChange={(e) => setLdapCreds((c) => ({ ...c, server_url: e.target.value }))}
+                        placeholder="ldap://ldap.example.com"
+                        className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-sm font-medium text-slate-700">Port</span>
+                      <input
+                        type="text"
+                        value={ldapCreds.port}
+                        onChange={(e) => setLdapCreds((c) => ({ ...c, port: e.target.value }))}
+                        placeholder="389"
+                        className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-sm font-medium text-slate-700">Bind DN <span className="text-red-500">*</span></span>
+                      <input
+                        type="text"
+                        value={ldapCreds.bind_dn}
+                        onChange={(e) => setLdapCreds((c) => ({ ...c, bind_dn: e.target.value }))}
+                        placeholder="cn=read-only-admin,dc=example,dc=com"
+                        className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-sm font-medium text-slate-700">Bind Password <span className="text-red-500">*</span></span>
+                      <input
+                        type="password"
+                        value={ldapCreds.bind_password}
+                        onChange={(e) => setLdapCreds((c) => ({ ...c, bind_password: e.target.value }))}
+                        placeholder="••••••••"
+                        autoComplete="off"
+                        className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-sm font-medium text-slate-700">Search Base DN <span className="text-red-500">*</span></span>
+                      <input
+                        type="text"
+                        value={ldapCreds.search_base_dn}
+                        onChange={(e) => setLdapCreds((c) => ({ ...c, search_base_dn: e.target.value }))}
+                        placeholder="dc=example,dc=com"
+                        className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
+                      />
+                    </label>
+                    <div className="block">
+                      <label htmlFor="ldap-search-filter" className="block">
+                        <span className="text-sm font-medium text-slate-700">Search Filter Template</span>
+                      </label>
+                      <input
+                        id="ldap-search-filter"
+                        type="text"
+                        value={ldapCreds.search_filter_template}
+                        onChange={(e) => setLdapCreds((c) => ({ ...c, search_filter_template: e.target.value }))}
+                        placeholder="(|(mail={query})(uid={query}))"
+                        className="mt-1.5 block w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2.5 font-mono text-sm shadow-sm transition-colors focus:border-brand-500 focus:ring-2 focus:ring-brand-500/20 focus:outline-none"
+                      />
+                      <p className="mt-1.5 text-xs text-slate-500">
+                        Use <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-xs">{"{query}"}</code> as a placeholder — it will be replaced with the lookup value at runtime.
+                      </p>
+                    </div>
                   </>
                 )}
               </div>
@@ -340,7 +449,7 @@ export default function SettingsPage() {
             <button
               type="button"
               onClick={handleTest}
-              disabled={noProvider || busy}
+              disabled={noProvider || missingRequired || busy}
               className="inline-flex items-center gap-2 rounded-xl border border-slate-300 px-5 py-2.5 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {testing && (
@@ -354,7 +463,7 @@ export default function SettingsPage() {
             <button
               type="button"
               onClick={handleSave}
-              disabled={noProvider || busy}
+              disabled={noProvider || missingRequired || busy}
               className="inline-flex items-center gap-2 rounded-xl bg-brand-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-brand-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {saving && (

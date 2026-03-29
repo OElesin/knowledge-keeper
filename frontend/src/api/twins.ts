@@ -124,7 +124,7 @@ export async function lookupEmployee(query: string): Promise<EmployeeRecord> {
 }
 
 export interface DirectoryConfig {
-  provider: "microsoft" | "google" | null;
+  provider: "microsoft" | "google" | "ldap" | null;
   credentials_configured: boolean;
 }
 
