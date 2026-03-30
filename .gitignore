@@ -36,6 +36,7 @@ frontend/dist/
 frontend/build/
 .env
 .env.local
+.env.production
 
 # Coverage
 htmlcov/
