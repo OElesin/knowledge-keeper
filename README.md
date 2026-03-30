@@ -14,14 +14,14 @@ An open-source, self-hosted platform that transforms departing employees' email 
 
 ### Directory Employee Lookup
 
-Search for employees by email or ID directly from the offboarding form. KnowledgeKeeper queries your corporate directory (Microsoft Entra ID or Google Workspace) and auto-fills the form fields. To use it, type an email or employee ID into the lookup field at the top of the offboarding form and click "Lookup".
+Search for employees by email or ID directly from the offboarding form. KnowledgeKeeper queries your corporate directory (Microsoft Entra ID, Google Workspace, or LDAP) and auto-fills the form fields. To use it, type an email or employee ID into the lookup field at the top of the offboarding form and click "Lookup".
 
 ### Directory Provider Settings
 
 Configure your directory provider from the Admin Dashboard — no CDK redeployments or AWS console access needed. Navigate to `/settings` (or click "Settings" in the dashboard header) to:
 
-1. Select your provider (Microsoft Entra ID or Google Workspace)
-2. Enter credentials (tenant ID / client ID / client secret for Microsoft, or service account JSON key for Google)
+1. Select your provider (Microsoft Entra ID, Google Workspace, or LDAP)
+2. Enter credentials (tenant ID / client ID / client secret for Microsoft, service account JSON key for Google, or server URL / bind DN / password for LDAP)
 3. Click "Test Connection" to verify credentials work before saving
 4. Click "Save" to persist — credentials are stored in AWS Secrets Manager, never in the browser
 
@@ -79,43 +79,65 @@ knowledgekeeper/
 - Python 3.12+
 - Node.js 18+ (for CDK CLI and frontend)
 - AWS CLI configured with credentials
-- AWS CDK CLI (`npm install -g aws-cdk`)
+- AWS CDK CLI v2.1114.1+ (`npm install -g aws-cdk@latest`)
+- Docker (for Lambda layer bundling during CDK synth)
 
 ## Quick Start
 
 ```bash
-# Clone and set up Python environment
+# Clone and set up
 git clone https://github.com/your-org/knowledgekeeper.git
 cd knowledgekeeper
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r infrastructure/requirements.txt
 
-# Bootstrap CDK (first time only)
-cd infrastructure
-cdk bootstrap aws://<ACCOUNT_ID>/us-east-1
+# Bootstrap CDK (first time per account/region)
+cdk bootstrap aws://<ACCOUNT_ID>/eu-central-1
 
-# Deploy all stacks
-cdk deploy --all --require-approval broadening
+# Deploy everything (defaults to eu-central-1)
+./deploy.sh
 
-# Retrieve API URL and key from stack outputs
-aws cloudformation describe-stacks --stack-name KKQueryStackDev \
-  --query "Stacks[0].Outputs" --output table
+# Deploy to a specific region or environment
+./deploy.sh --region us-east-1 --env prod
 
-# Set up frontend
-cd ../frontend
+# Deploy backend only (skip frontend build)
+./deploy.sh --skip-fe
+```
+
+The deploy script handles Python venv setup, CDK synth, stack deployment, frontend build with correct env vars, and S3/CloudFront deployment.
+
+### Manual Frontend Deployment
+
+If you need to redeploy just the frontend after changes:
+
+```bash
+cd frontend
+npm ci
+npm run build
+aws s3 sync dist/ s3://kk-<ACCOUNT_ID>-<ENV>-frontend/ --delete --region eu-central-1
+aws cloudfront create-invalidation --distribution-id <DIST_ID> --paths "/*"
+```
+
+### Local Development
+
+```bash
+# Frontend dev server (uses .env.local for local API proxy)
+cd frontend
 npm install
-cp .env.example .env
-# Edit .env with your API URL, API key, and user ID
 npm run dev
 
-# Run tests
-cd ..
+# Run Lambda unit tests
 pip install pytest moto pydantic boto3
 pytest lambdas/ -v
 ```
 
-For the full walkthrough including Bedrock model access, Google Workspace setup, API key retrieval, and troubleshooting, see [docs/deployment.md](docs/deployment.md).
+## Deployment Notes
+
+- Default region is `eu-central-1`. Override with `./deploy.sh --region <region>`.
+- Verify Bedrock model availability in your target region before deploying (Nova Embeddings + Nova Pro).
+- CDK bootstrap is required once per account/region: `cdk bootstrap aws://<ACCOUNT_ID>/<REGION>`.
+- The frontend uses `.env.production` for production builds and `.env.local` for local dev. The deploy script writes `.env.production` automatically.
+- CloudFront is a global service — invalidation commands don't need a `--region` flag.
+
+For the full walkthrough see [docs/deployment.md](docs/deployment.md).
 
 ## Security
 
@@ -131,8 +153,8 @@ For the full walkthrough including Bedrock model access, Google Workspace setup,
 | Status | Feature | Description |
 |--------|---------|-------------|
 | ✅ Done | Core Platform (MVP) | Email ingestion pipeline, RAG query engine, admin dashboard, access control, twin lifecycle management |
-| ✅ Done | Directory Employee Lookup | Auto-fill offboarding form by looking up employees from Microsoft Entra ID or Google Workspace directories |
-| ✅ Done | Directory Provider Setup | Self-service UI for IT admins to configure directory provider credentials without CDK redeployments |
+| ✅ Done | Directory Employee Lookup | Auto-fill offboarding form by looking up employees from Microsoft Entra ID, Google Workspace, or LDAP directories |
+| ✅ Done | Directory Provider Setup | Self-service UI for IT admins to configure directory provider credentials (including LDAP) without CDK redeployments |
 | ✅ Done | Microsoft 365 Email Integration | Ingest departing employees' email archives from M365 mailboxes via Microsoft Graph API |
 | 📋 Planned | SharePoint Document Ingestion | Capture OneDrive/SharePoint documents alongside emails, with text extraction, deduplication, and PII detection |
 | 📋 Planned | Google Drive Document Ingestion | Capture Google Drive documents (including native Docs/Sheets/Slides export) alongside emails |

@@ -10,6 +10,7 @@ from aws_cdk import (
     Stack,
     CfnOutput,
     aws_dynamodb as dynamodb,
+    aws_iam as iam,
     aws_kms as kms,
     aws_lambda as _lambda,
     aws_s3 as s3,
@@ -71,6 +72,21 @@ class KKStorageStack(Stack):
             description="KMS key for KnowledgeKeeper S3 Vectors encryption",
             enable_key_rotation=True,
             removal_policy=RemovalPolicy.RETAIN,
+        )
+
+        # Grant S3 Vectors indexing service principal access to the KMS key
+        self.vectors_kms_key.add_to_resource_policy(
+            iam.PolicyStatement(
+                sid="AllowS3VectorsIndexing",
+                actions=[
+                    "kms:Decrypt",
+                    "kms:GenerateDataKey",
+                    "kms:DescribeKey",
+                    "kms:CreateGrant",
+                ],
+                principals=[iam.ServicePrincipal("indexing.s3vectors.amazonaws.com")],
+                resources=["*"],
+            )
         )
 
         # --- S3 Vector Bucket ---
@@ -211,6 +227,7 @@ class KKStorageStack(Stack):
                     command=[
                         "bash", "-c",
                         "pip install -r requirements.txt -t /asset-output/python"
+                        " && mkdir -p /asset-output/python/shared"
                         " && cp *.py /asset-output/python/shared/"
                         " && touch /asset-output/python/shared/__init__.py",
                     ],

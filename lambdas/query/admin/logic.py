@@ -169,10 +169,21 @@ def save_directory_config(
 
     # Store credentials in Secrets Manager (overwrites previous — Req 2.7)
     try:
-        secrets_module.put_secret_value(
-            secret_name,
-            _json.dumps(credentials),
-        )
+        try:
+            secrets_module.put_secret_value(
+                secret_name,
+                _json.dumps(credentials),
+            )
+        except Exception as put_err:
+            # Secret may not exist yet — try creating it
+            err_code = getattr(put_err, "response", {}).get("Error", {}).get("Code", "")
+            if err_code == "ResourceNotFoundException":
+                secrets_module.create_secret(
+                    secret_name,
+                    _json.dumps(credentials),
+                )
+            else:
+                raise
     except Exception:
         logger.exception("Failed to store directory credentials")
         return {

@@ -161,7 +161,27 @@ class KKIngestionStack(Stack):
         )
 
         # S3 event notification: trigger on .mbox uploads
-        storage_stack.raw_archives_bucket.add_event_notification(
+        # We avoid storage_stack.raw_archives_bucket.add_event_notification()
+        # because it creates a Lambda permission in StorageStack that references
+        # this Lambda's ARN, causing a cyclic dependency.
+        #
+        # Instead, we grant the permission here and use add_event_notification
+        # on an imported bucket reference so all resources stay in this stack.
+
+        self.ingest_trigger_fn.add_permission(
+            "AllowS3Invoke",
+            principal=iam.ServicePrincipal("s3.amazonaws.com"),
+            source_arn=storage_stack.raw_archives_bucket.bucket_arn,
+            source_account=self.account,
+        )
+
+        imported_bucket = s3.Bucket.from_bucket_attributes(
+            self,
+            "ImportedRawArchivesBucket",
+            bucket_arn=storage_stack.raw_archives_bucket.bucket_arn,
+        )
+
+        imported_bucket.add_event_notification(
             s3.EventType.OBJECT_CREATED,
             s3n.LambdaDestination(self.ingest_trigger_fn),
             s3.NotificationKeyFilter(suffix=".mbox"),

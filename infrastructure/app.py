@@ -17,7 +17,7 @@ env_config = environments.get(env_name, {})
 # AWS account and region from environment variables (never hardcoded)
 aws_env = cdk.Environment(
     account=os.environ.get("CDK_DEFAULT_ACCOUNT"),
-    region=os.environ.get("CDK_DEFAULT_REGION", "us-east-1"),
+    region=os.environ.get("CDK_DEFAULT_REGION", "eu-central-1"),
 )
 
 # Stack naming: KK{Layer}Stack{Environment} e.g. KKStorageStackDev

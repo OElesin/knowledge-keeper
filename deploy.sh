@@ -6,14 +6,16 @@
 # and builds the React frontend before the frontend stack deploys it to S3/CloudFront.
 #
 # Usage:
-#   ./deploy.sh              # Deploy everything (default: dev environment)
-#   ./deploy.sh --env prod   # Deploy to a specific environment
-#   ./deploy.sh --skip-fe    # Deploy backend stacks only, skip frontend build & stack
+#   ./deploy.sh                          # Deploy everything (default: dev, us-east-1)
+#   ./deploy.sh --env prod               # Deploy to a specific environment
+#   ./deploy.sh --region eu-central-1    # Deploy to a specific AWS region
+#   ./deploy.sh --skip-fe                # Deploy backend stacks only, skip frontend build & stack
 #
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_NAME="dev"
+AWS_REGION="${AWS_DEFAULT_REGION:-eu-central-1}"
 SKIP_FRONTEND=false
 
 # --- Parse arguments ---
@@ -23,21 +25,29 @@ while [[ $# -gt 0 ]]; do
             ENV_NAME="$2"
             shift 2
             ;;
+        --region)
+            AWS_REGION="$2"
+            shift 2
+            ;;
         --skip-fe)
             SKIP_FRONTEND=true
             shift
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: ./deploy.sh [--env <environment>] [--skip-fe]"
+            echo "Usage: ./deploy.sh [--env <environment>] [--region <aws-region>] [--skip-fe]"
             exit 1
             ;;
     esac
 done
 
+# Set region for CDK and AWS CLI
+export CDK_DEFAULT_REGION="${AWS_REGION}"
+export AWS_DEFAULT_REGION="${AWS_REGION}"
+
 SUFFIX="$(echo "${ENV_NAME:0:1}" | tr '[:lower:]' '[:upper:]')${ENV_NAME:1}"
 
-echo "==> Deploying KnowledgeKeeper (env: ${ENV_NAME})"
+echo "==> Deploying KnowledgeKeeper (env: ${ENV_NAME}, region: ${AWS_REGION})"
 echo ""
 
 # --- Preflight checks ---
@@ -117,13 +127,13 @@ echo "==> Building frontend..."
 cd "${SCRIPT_DIR}/frontend"
 npm ci --silent
 
-# Write .env with the deployed API URL
-cat > .env <<EOF
+# Write .env.production with the deployed API URL (overrides .env.local for production builds)
+cat > .env.production <<EOF
 VITE_API_URL=${API_URL}
 VITE_API_KEY=${API_KEY}
 VITE_USER_ID=admin
 EOF
-echo "    Wrote frontend/.env with API URL"
+echo "    Wrote frontend/.env.production with API URL"
 
 npm run build
 echo "    Frontend built to frontend/dist/"
@@ -149,6 +159,7 @@ echo "  KnowledgeKeeper deployed successfully"
 echo "============================================"
 echo ""
 echo "  Environment:  ${ENV_NAME}"
+echo "  Region:       ${AWS_REGION}"
 echo "  API URL:      ${API_URL:-N/A}"
 echo "  Frontend URL: ${FRONTEND_URL}"
 echo ""
