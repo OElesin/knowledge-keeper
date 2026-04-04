@@ -593,7 +593,9 @@ def list_twins(
     """List all twins, optionally filtered by status."""
     status_filter = (query_params or {}).get("status")
     items = dynamo_module.list_twins(status_filter=status_filter)
-    return {"success": True, "status_code": 200, "data": {"twins": items}}
+    # Filter out non-twin records (e.g. SETTINGS#directory config)
+    twins = [t for t in items if not t.get("employeeId", "").startswith("SETTINGS#")]
+    return {"success": True, "status_code": 200, "data": {"twins": twins}}
 
 
 # ---------------------------------------------------------------------------
