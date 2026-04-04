@@ -1,8 +1,12 @@
 """KKQueryStack: API Gateway REST API with API Key auth, Lambda functions, API routes."""
+import subprocess
 from pathlib import Path
 
+import jsii
 from aws_cdk import (
+    BundlingOptions,
     Duration,
+    ILocalBundling,
     Stack,
     CfnOutput,
     aws_apigateway as apigateway,
@@ -10,6 +14,22 @@ from aws_cdk import (
     aws_lambda as _lambda,
 )
 from constructs import Construct
+
+
+@jsii.implements(ILocalBundling)
+class _LocalBundling:
+    """Pip-install locally when Docker is unavailable."""
+
+    def __init__(self, source_path: str) -> None:
+        self._source_path = source_path
+
+    def try_bundle(self, output_dir, *args, **kwargs) -> bool:
+        python_dir = f"{output_dir}/python"
+        subprocess.check_call(
+            ["pip", "install", "-r", f"{self._source_path}/requirements.txt",
+             "-t", python_dir, "-q"],
+        )
+        return True
 
 
 class KKQueryStack(Stack):
@@ -279,6 +299,31 @@ class KKQueryStack(Stack):
                 )
             )
 
+        # --- LDAP + cryptography Lambda Layer ---
+        # Separate layer for ldap3 and cryptography packages, used by the
+        # admin Lambda for LDAP test-connection and Google JWT signing.
+        # Uses local bundling to avoid Docker dependency.
+        ldap_layer_path = str(Path(__file__).resolve().parent / "ldap_layer")
+
+        self.ldap_layer = _lambda.LayerVersion(
+            self,
+            "LdapLayer",
+            layer_version_name=f"kk-{env_name}-ldap",
+            description="ldap3 and cryptography packages for directory provider connections",
+            compatible_runtimes=[_lambda.Runtime.PYTHON_3_12],
+            code=_lambda.Code.from_asset(
+                ldap_layer_path,
+                bundling=BundlingOptions(
+                    image=_lambda.Runtime.PYTHON_3_12.bundling_image,
+                    command=[
+                        "bash", "-c",
+                        "pip install -r requirements.txt -t /asset-output/python",
+                    ],
+                    local=_LocalBundling(ldap_layer_path),
+                ),
+            ),
+        )
+
         self.admin_fn = _lambda.Function(
             self,
             "AdminFn",
@@ -289,7 +334,7 @@ class KKQueryStack(Stack):
             role=admin_role,
             timeout=Duration.seconds(30),
             memory_size=512,
-            layers=[storage_stack.shared_layer],
+            layers=[storage_stack.shared_layer, self.ldap_layer],
             environment={
                 "TWINS_TABLE_NAME": storage_stack.twins_table.table_name,
                 "ACCESS_TABLE_NAME": storage_stack.access_table.table_name,
@@ -452,7 +497,7 @@ class KKQueryStack(Stack):
             role=directory_lookup_role,
             timeout=Duration.seconds(10),
             memory_size=256,
-            layers=[storage_stack.shared_layer],
+            layers=[storage_stack.shared_layer, self.ldap_layer],
             environment={
                 "DIRECTORY_PROVIDER": directory_provider,
                 "DIRECTORY_SECRET_NAME": directory_secret_name,
@@ -460,9 +505,6 @@ class KKQueryStack(Stack):
             },
         )
 
-        # =====================================================================
-        # API Gateway — /directory/lookup GET route
-        # =====================================================================
         directory_lookup_integration = apigateway.LambdaIntegration(
             self.directory_lookup_fn
         )
